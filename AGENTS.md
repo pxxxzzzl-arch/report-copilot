@@ -51,7 +51,8 @@ report-copilot/
     text.py               # 文本归一化（评测命中判定、评测集校验、引用校验共用）
   data/
     raw/                  # 原始 PDF（不提交 Git）
-    parsed/               # 解析中间结果（不提交 Git）
+    parsed/               # 解析中间结果：blocks/ precheck/ chunks/（不提交 Git）
+    models/               # 本地模型权重，如 bge-m3（不提交 Git）
     manifest.csv          # 文档清单：doc_id, company, stock_code, year, file_name, n_pages, exchange, publish_date, source_url, sha256
     precheck_summary.csv  # PDF 预检汇总（每文档一行）
   ingest/
@@ -63,6 +64,7 @@ report-copilot/
     ocr.py                # 扫描页 OCR
     index.py              # 写入 Qdrant / BM25 索引
   retrieval/
+    embedding.py          # 向量化接口（建索引与检索共用）；v0 为本地 bge-m3
     dense.py  sparse.py  bm25.py  fusion.py  rerank.py  search.py
   generation/
     prompts.py  answer.py  citation.py
@@ -90,6 +92,7 @@ report-copilot/
     architecture.md
   tests/
   deploy/
+    docker-compose.dev.yml  # 开发用基础设施（阶段 4 起：Qdrant）
     docker-compose.yml  nginx.conf
   bench/
     load_test.py          # 推理压测

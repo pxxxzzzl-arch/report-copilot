@@ -71,16 +71,32 @@ class EmbeddingSettings(BaseModel):
 
     provider: Literal["local", "openai_compat"] = "local"
     model_name: str = "BAAI/bge-m3"
+    # 本地模型目录；为空时由 FlagEmbedding 按 model_name 从 HuggingFace 下载。
+    # 网络受限时先把模型下载到该目录（见 README），相对路径以项目根目录为基准
+    model_path: Path | None = Path("data/models/bge-m3")
     api_base: str | None = None  # provider=openai_compat 时必填
     api_key: SecretStr | None = None
     device: Device = "cpu"
     batch_size: int = Field(default=16, gt=0)
 
-    @field_validator("api_base", "api_key", mode="before")
+    @field_validator("api_base", "api_key", "model_path", mode="before")
     @classmethod
     def _empty_to_none(cls, v: object) -> object:
         # .env 里写 `EMBEDDING__API_BASE=`（空值）时读到的是空字符串，这里统一视为"未配置"
         return None if v == "" else v
+
+    @property
+    def model_source(self) -> str:
+        """传给模型加载函数的名称或路径：本地目录存在时优先使用，否则用 model_name。
+
+        在这里（而不是字段校验器里）解析相对路径：pydantic 默认不校验字段默认值，
+        写在校验器里的话，默认值不会被转换成绝对路径。
+        """
+        if self.model_path is not None:
+            path = self.model_path if self.model_path.is_absolute() else PROJECT_ROOT / self.model_path
+            if path.exists():
+                return str(path)
+        return self.model_name
 
     @model_validator(mode="after")
     def _check_api_base(self) -> EmbeddingSettings:
@@ -108,6 +124,33 @@ class StoreSettings(BaseModel):
     # DSN 里可能带数据库密码，所以同样用 SecretStr
     postgres_dsn: SecretStr = SecretStr("postgresql://copilot@localhost:5432/copilot")
     redis_url: str = "redis://localhost:6379/0"
+
+
+class ChunkSettings(BaseModel):
+    """切分策略（阶段 5 消融实验的主要变量）。"""
+
+    chunker: Literal["fixed"] = "fixed"  # fixed：固定字符长度切分
+    chunk_size: int = Field(default=500, gt=0)  # 每个 chunk 的最大字符数
+    overlap: int = Field(default=50, ge=0)  # 相邻 chunk 重叠的字符数
+
+    @model_validator(mode="after")
+    def _check_overlap(self) -> ChunkSettings:
+        # overlap >= chunk_size 时步长 <= 0，切分会原地打转
+        if self.overlap >= self.chunk_size:
+            raise ValueError("overlap 必须小于 chunk_size")
+        return self
+
+    @property
+    def key(self) -> str:
+        """切分配置的短标识，用于文件名和集合名，如 fixed_c500_o50。"""
+        return f"{self.chunker}_c{self.chunk_size}_o{self.overlap}"
+
+
+class IndexSettings(BaseModel):
+    """向量化与建索引。"""
+
+    max_length: int = Field(default=1024, gt=0)  # 向量化时的最大 token 数，超出部分截断
+    upsert_batch: int = Field(default=256, gt=0)  # 每批写入 Qdrant 的点数
 
 
 class CninfoSettings(BaseModel):
@@ -176,10 +219,20 @@ class Settings(BaseSettings):
     embedding: EmbeddingSettings = EmbeddingSettings()
     reranker: RerankerSettings = RerankerSettings()
     store: StoreSettings = StoreSettings()
+    chunk: ChunkSettings = ChunkSettings()
+    index: IndexSettings = IndexSettings()
     cninfo: CninfoSettings = CninfoSettings()
     precheck: PrecheckSettings = PrecheckSettings()
     eval: EvalSettings = EvalSettings()
     log: LogSettings = LogSettings()
+
+    def collection_name(self) -> str:
+        """Qdrant 集合名 = 基础名 + 切分配置 + 向量模型，不同消融配置的索引可以并存。
+
+        例：report_chunks__fixed_c500_o50__bge-m3
+        """
+        model = self.embedding.model_name.split("/")[-1].lower()
+        return f"{self.store.qdrant_collection}__{self.chunk.key}__{model}"
 
 
 @lru_cache(maxsize=1)

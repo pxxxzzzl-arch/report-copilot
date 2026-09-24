@@ -106,3 +106,18 @@ def test_get_settings_is_cached() -> None:
         assert get_settings() is get_settings()
     finally:
         get_settings.cache_clear()
+
+
+def test_embedding_model_source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)  # 换工作目录，验证相对路径以项目根目录为基准
+    monkeypatch.setenv("EMBEDDING__MODEL_PATH", str(tmp_path / "missing"))
+    assert Settings(_env_file=None).embedding.model_source == "BAAI/bge-m3"  # 目录不存在 -> 用模型名
+    (tmp_path / "bge").mkdir()
+    monkeypatch.setenv("EMBEDDING__MODEL_PATH", str(tmp_path / "bge"))
+    assert Settings(_env_file=None).embedding.model_source == str(tmp_path / "bge")
+    monkeypatch.setenv("EMBEDDING__MODEL_PATH", "")  # 空值 -> 不使用本地目录
+    assert Settings(_env_file=None).embedding.model_source == "BAAI/bge-m3"
+
+
+def test_collection_name() -> None:
+    assert Settings(_env_file=None).collection_name() == "report_chunks__fixed_c500_o50__bge-m3"

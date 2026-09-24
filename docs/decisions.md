@@ -109,3 +109,13 @@
   如果 oracle 达不到满分，说明命中判定、评测集标注或页面文本之间有不一致，这时的检索指标就不可信。
 - **结果**：oracle 除 Precision 外全部 1.0000；random_page 的 Recall@10 为 0.0096。
   oracle 的 Precision@5 = 0.2808 是定义决定的（分母固定为 K，而 oracle 每题只返回 1~3 页）。
+
+## D-013 bge-m3 的获取方式与向量化设备（阶段 4）
+
+- **模型来源**：HuggingFace 经代理只有约 0.1MB/s，ModelScope 直连约 2.9MB/s（用 10MB 分段请求实测）。
+  所以从 ModelScope 下载，再用 HuggingFace API 公布的 sha256（大文件）和 git blob 哈希（小文件）逐个校验，12 个文件全部一致。
+  只下载推理需要的 12 个文件（约 2.3GB），不下载 onnx 目录（另外 2.3GB）。
+- **设备**：64 个 chunk 实测，MPS（fp16）33.4 条/秒，CPU（fp32）4.3 条/秒，快约 8 倍；
+  两种设备算出的向量余弦相似度最低 0.99968，fp16 带来的精度损失可以忽略。
+  代码里的默认值仍是 cpu（与机器无关），运行时用 `EMBEDDING__DEVICE=mps` 指定；设备会写入评测明细的元信息。
+- **注意**：FlagEmbedding 默认只截取 512 个 token（passage_max_length），这里调用时显式传 `max_length=1024` 覆盖。

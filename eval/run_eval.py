@@ -62,9 +62,25 @@ def _page_texts(settings: Settings) -> PdfPageTexts:
     return PdfPageTexts(read_manifest(settings.paths.manifest_path), settings.paths.raw_dir)
 
 
+def _dense(settings: Settings, _items: list[dict]) -> Retriever:
+    # 延迟导入：只有真正评测 dense 时才加载 torch / FlagEmbedding / qdrant-client
+    from qdrant_client import QdrantClient
+
+    from retrieval.dense import DenseRetriever
+    from retrieval.embedding import build_embedder
+
+    return DenseRetriever(
+        QdrantClient(url=settings.store.qdrant_url),
+        settings.collection_name(),
+        build_embedder(settings.embedding, settings.index.max_length),
+        settings.chunk,
+    )
+
+
 RETRIEVERS: dict[str, RetrieverFactory] = {
     "oracle": lambda s, items: OracleRetriever(items, _page_texts(s)),
     "random_page": lambda s, items: RandomPageRetriever(read_manifest(s.paths.manifest_path), _page_texts(s)),
+    "dense": _dense,
 }
 
 
