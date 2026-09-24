@@ -7,6 +7,11 @@ v0（parser_version = pymupdf-blocks-v0）刻意保持朴素，作为消融实�
     - 不处理符号字体字符（如 Wingdings 的勾选框，见 docs/decisions.md D-008）。
 以上每一项都是阶段 5 可以单独改进、单独评测的变量。
 
+v1（pymupdf-blocks-v1-nohf）= v0 + 去页眉页脚（experiments/badcases.md BC-004）：
+    页眉（"××公司2025年年度报告全文"）和页码几乎出现在每一页，会混进大量 chunk，成为重复噪声。
+    判定规则见 remove_headers_footers：只看页面顶部/底部的带状区域，并要求在很多页上重复出现，
+    所以正文里偶尔出现在页面顶部的内容（如"合并财务报表主要项目注释（续）"，约 10% 的页）不会被误删。
+
 用法：
     uv run python -m ingest.parse                 # 解析 manifest 中的全部文档
     uv run python -m ingest.parse --doc 600519_2024
@@ -18,6 +23,8 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import re
+from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -25,13 +32,13 @@ from typing import Literal
 import pymupdf
 
 from common.log import setup_logging, timed, trace_context
-from config import get_settings
+from config import ParseSettings, get_settings
 from ingest.download import read_manifest
 
 logger = logging.getLogger("ingest.parse")
 
 # 配置中的解析器短名 -> 写入 chunk.parser_version 的完整版本号
-PARSER_VERSIONS = {"v0": "pymupdf-blocks-v0"}
+PARSER_VERSIONS = {"v0": "pymupdf-blocks-v0", "v1": "pymupdf-blocks-v1-nohf"}
 BlockType = Literal["text", "title", "table", "image"]
 
 # PyMuPDF get_text("blocks") 返回元组 (x0, y0, x1, y1, text, block_no, block_type)，block_type：0 文本，1 图片
@@ -72,10 +79,49 @@ def parse_page(page: pymupdf.Page, doc_id: str, page_no: int) -> list[Block]:
     return blocks
 
 
-def parse_pdf(path: Path, doc_id: str) -> list[Block]:
-    """解析整份 PDF。"""
+def parse_pdf(path: Path, doc_id: str, parser: str = "v0", cfg: ParseSettings | None = None) -> list[Block]:
+    """解析整份 PDF。parser="v1" 时在 v0 的结果上去掉页眉页脚。"""
     with pymupdf.open(path) as doc:
-        return [b for page_no, page in enumerate(doc, start=1) for b in parse_page(page, doc_id, page_no)]
+        blocks = [b for page_no, page in enumerate(doc, start=1) for b in parse_page(page, doc_id, page_no)]
+        page_heights = {page_no: page.rect.height for page_no, page in enumerate(doc, start=1)}
+    if parser == "v1":
+        cfg = cfg or ParseSettings()
+        blocks = remove_headers_footers(blocks, page_heights, cfg.header_band, cfg.header_min_page_ratio)
+    return blocks
+
+
+def header_key(text: str) -> str:
+    """页眉页脚比对用的归一化文本：去掉空白，每一串数字替换成 #。
+
+    这样 "8 / 143" 与 "9 / 143"、"2024年年度报告" 的不同页都会得到同一个 key。
+    """
+    return re.sub(r"\d+", "#", "".join(text.split()))
+
+
+def remove_headers_footers(
+    blocks: list[Block], page_heights: dict[int, float], band: float, min_page_ratio: float
+) -> list[Block]:
+    """删除页眉页脚块。
+
+    1. 候选：文本块完全位于页面顶部 band 比例（y1 <= band*高）或底部 band 比例（y0 >= (1-band)*高）区域内；
+    2. 统计每个候选 key（header_key）出现在多少个不同页面上；
+    3. 出现页数 / 总页数 >= min_page_ratio 的 key 判为页眉页脚，删除这些候选块。
+    不在带状区域内的块永远不会被删除，即使它的文字与页眉相同（例如正文里提到公司全称）。
+    """
+    n_pages = len(page_heights)
+    if n_pages == 0:
+        return blocks
+
+    def in_band(b: Block) -> bool:
+        h = page_heights[b.page]
+        return b.type == "text" and (b.bbox[3] <= band * h or b.bbox[1] >= (1 - band) * h)
+
+    pages_by_key: dict[str, set[int]] = defaultdict(set)
+    for b in blocks:
+        if in_band(b):
+            pages_by_key[header_key(b.text)].add(b.page)
+    repeated = {k for k, pages in pages_by_key.items() if len(pages) / n_pages >= min_page_ratio}
+    return [b for b in blocks if not (in_band(b) and header_key(b.text) in repeated)]
 
 
 def write_blocks(blocks: list[Block], path: Path) -> None:
@@ -103,7 +149,7 @@ def run(doc_ids: list[str] | None = None) -> dict[str, int]:
     counts: dict[str, int] = {}
     for doc_id in doc_ids or sorted(manifest):
         with timed("parse", logger, doc_id=doc_id, parser=PARSER_VERSIONS[parser]) as info:
-            blocks = parse_pdf(settings.paths.raw_dir / manifest[doc_id].file_name, doc_id)
+            blocks = parse_pdf(settings.paths.raw_dir / manifest[doc_id].file_name, doc_id, parser, settings.parse)
             write_blocks(blocks, blocks_path(settings.paths.parsed_dir, parser, doc_id))
             counts[doc_id] = info["n_blocks"] = len(blocks)
     return counts

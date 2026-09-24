@@ -8,7 +8,7 @@ import pytest
 from config import ChunkSettings
 from ingest.chunk import chunk_document, make_chunk_id, read_chunks, text_for_embedding, window_spans, write_chunks
 from ingest.download import ManifestRow
-from ingest.parse import Block, parse_pdf, read_blocks, write_blocks
+from ingest.parse import Block, header_key, parse_pdf, read_blocks, remove_headers_footers, write_blocks
 
 KEY, PV = "v0_fixed_c500_o50", "pymupdf-blocks-v0"  # 切分标识、解析器版本
 META = ManifestRow("000001_2024", "测试公司", "000001", 2024, "x.pdf", 2, "SZSE", "", "", "")
@@ -117,3 +117,47 @@ def test_blocks_and_chunks_roundtrip(tmp_path: Path) -> None:
     chunks = chunk_document(blocks, META, ChunkSettings(chunk_size=5, overlap=1), KEY, PV)
     write_chunks(chunks, tmp_path / "c.jsonl")
     assert read_chunks(tmp_path / "c.jsonl") == chunks
+
+
+# ---------------- v1：去页眉页脚 ----------------
+
+
+def _b(page: int, text: str, y0: float, y1: float) -> Block:
+    return Block("d", page, f"p{page}_{text}", "text", text, [0, y0, 100, y1])
+
+
+def test_header_key() -> None:
+    assert header_key("8 / 143") == header_key("9/143") == "#/#"
+    assert header_key("贵州茅台2024 年年度报告") == "贵州茅台#年年度报告"
+
+
+def test_remove_headers_footers() -> None:
+    heights = {p: 1000.0 for p in range(1, 11)}  # 10 页，每页高 1000；band=0.1 -> 顶部 y1<=100，底部 y0>=900
+    blocks = []
+    for p in range(1, 11):
+        blocks.append(_b(p, "某公司2024年年度报告", 20, 40))  # 每页顶部：页眉
+        blocks.append(_b(p, f"{p} / 10", 950, 970))  # 每页底部：页码
+        blocks.append(_b(p, f"正文第{p}页", 300, 400))  # 正文
+    blocks.append(_b(3, "附注（续）", 50, 70))  # 只在 2 页顶部出现（20% < 30%），不是页眉
+    blocks.append(_b(4, "附注（续）", 50, 70))
+    blocks.append(_b(5, "某公司2024年年度报告", 500, 520))  # 与页眉同文，但在页面中部：不删
+    kept = remove_headers_footers(blocks, heights, band=0.1, min_page_ratio=0.3)
+    texts = [b.text for b in kept]
+    assert "某公司2024年年度报告" in texts and texts.count("某公司2024年年度报告") == 1  # 只剩页面中部那个
+    assert not any("/ 10" in t for t in texts)  # 页码全部删除
+    assert texts.count("附注（续）") == 2  # 低于阈值，保留
+    assert sum(t.startswith("正文") for t in texts) == 10
+
+
+def test_parse_pdf_v1_removes_repeated_header(tmp_path: Path) -> None:
+    doc = pymupdf.open()
+    for i in range(3):
+        page = doc.new_page()  # 默认 A4：高 842pt
+        page.insert_text((72, 30), "ACME annual report", fontsize=9)  # 顶部页眉
+        page.insert_text((72, 400), f"body text {i}", fontsize=11)
+    doc.save(tmp_path / "h.pdf")
+    doc.close()
+    v0 = [b.text for b in parse_pdf(tmp_path / "h.pdf", "d", "v0")]
+    v1 = [b.text for b in parse_pdf(tmp_path / "h.pdf", "d", "v1")]
+    assert v0.count("ACME annual report") == 3
+    assert v1 == ["body text 0", "body text 1", "body text 2"]

@@ -159,7 +159,11 @@ class StoreSettings(BaseModel):
 class ParseSettings(BaseModel):
     """解析器版本（阶段 5 消融变量之一）。"""
 
-    parser: Literal["v0"] = "v0"  # v0：PyMuPDF 文本块，不做任何清洗
+    parser: Literal["v0", "v1"] = "v0"  # v0：PyMuPDF 文本块，不做清洗；v1：v0 + 去页眉页脚
+    # v1 的页眉页脚判定：位于页面顶部/底部 header_band 比例区域内，且（数字替换为占位符后）
+    # 在不少于 header_min_page_ratio 比例的页面上重复出现的文本块
+    header_band: float = Field(default=0.1, gt=0, lt=0.5)
+    header_min_page_ratio: float = Field(default=0.3, gt=0, le=1)
 
 
 class ChunkSettings(BaseModel):
