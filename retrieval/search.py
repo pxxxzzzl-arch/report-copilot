@@ -95,7 +95,9 @@ def build_pipeline(settings: Settings) -> SearchPipeline:
     """按配置组装真实组件（会加载模型、连接 Qdrant）。"""
     from qdrant_client import QdrantClient
 
+    from ingest.chunk import chunks_path, read_chunks
     from ingest.download import read_manifest
+    from retrieval.bm25 import BM25Retriever
     from retrieval.dense import DenseRetriever
     from retrieval.embedding import build_embedder
 
@@ -108,6 +110,11 @@ def build_pipeline(settings: Settings) -> SearchPipeline:
             embedder = build_embedder(settings.embedding, settings.index.max_length)
             sources[name] = DenseRetriever(client, settings.collection_name(), embedder, settings)
             labels[name] = f"dense({embedder.name})"
+        elif name == "bm25":
+            # BM25 与 dense 使用同一份 chunk（同一个切分标识），保证两路召回的候选可比、可融合
+            chunks = read_chunks(chunks_path(settings.paths.parsed_dir, settings.chunk_key()))
+            sources[name] = BM25Retriever(chunks, cfg.bm25_k1, cfg.bm25_b)
+            labels[name] = "bm25(jieba)"
         else:
             raise NotImplementedError(f"召回通道 {name} 尚未实现")
     parser = QueryParser(read_manifest(settings.paths.manifest_path), cfg.company_aliases) if cfg.use_filter else None

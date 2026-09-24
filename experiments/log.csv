@@ -1,2 +1,3 @@
 exp_id,date,git_commit,改动说明,parser,chunker,chunk_size,overlap,retriever,fusion,k_rrf,reranker,top_k,top_n,goldset_version,n_questions,hit@5,recall@5,mrr@10,备注
 E001,2026-09-24,def85fa,v0 朴素基线：PyMuPDF 文本块 + 固定长度切分 500/50 + bge-m3 dense，无过滤/融合/重排,pymupdf-blocks-v0,fixed,500,50,dense(BAAI/bge-m3),,,,10,,v1,52,0.6538,0.5385,0.4838,embed_device=mps(fp16); 明细 experiments/runs/E001.jsonl
+E002,2026-09-24,0c9fe67,E001 + 公司/年份过滤（规则查询理解，严格年份口径）,pymupdf-blocks-v0,fixed,500,50,filter+dense(BAAI/bge-m3),,,,10,,v1,52,0.6731,0.5577,0.5431,embed_device=mps(fp16); 明细 experiments/runs/E002.jsonl

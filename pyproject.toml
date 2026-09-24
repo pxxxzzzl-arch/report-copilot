@@ -7,6 +7,7 @@ requires-python = ">=3.11,<3.12"
 # 依赖按阶段逐步加入：用到哪个库时再 `uv add`，避免一开始就装 torch 等重依赖。
 dependencies = [
     "flagembedding==1.4.2",
+    "jieba>=0.42",
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
     "pymupdf>=1.28.2",
