@@ -158,3 +158,36 @@ def test_pipeline_multi_source_fuses_with_top_n() -> None:
     assert [x.chunk_id for x in pipe.search("q", 2)] == ["b", "a"]  # b 两路都召回，排第一
     assert s1.calls[0][0] == 7 and s2.calls[0][0] == 7  # 多路时每路取 top_n 个候选
     assert pipe.config["fusion"] == "rrf" and pipe.config["k_rrf"] == 60 and pipe.config["top_n"] == 7
+
+
+
+@pytest.mark.parametrize(
+    ("query", "expected"),
+    [
+        ("贵州茅台2024年研发投入合计是多少？", "研发投入合计是多少？"),
+        ("茅台 2025 年的营业收入", "的营业收入"),  # 别名
+        ("2024年贵州茅台和五粮液谁的研发投入更高？", "和谁的研发投入更高？"),  # 多家公司
+        ("五粮液2024年度的利润分配预案是什么？", "的利润分配预案是什么？"),  # "年度"一并去掉
+        ("贵州茅台2024年", "贵州茅台2024年"),  # 去完为空时返回原问题
+        ("招商银行2025年的净息差是多少？", "招商银行的净息差是多少？"),  # 识别不到的公司保留
+    ],
+)
+def test_strip_entities(query: str, expected: str) -> None:
+    assert PARSER.strip_entities(query) == expected
+
+
+def test_strip_requires_filter() -> None:
+    with pytest.raises(ValueError, match="use_filter"):
+        Settings(_env_file=None, retrieval={"strip_entities": True})
+
+
+def test_pipeline_passes_stripped_text_to_sources() -> None:
+    src = ListSource([])
+    src.search = lambda q, k, flt=None: (src.calls.append((q, flt)), [])[1]
+    settings = Settings(_env_file=None, retrieval={"use_filter": True, "strip_entities": True})
+    pipe = SearchPipeline(settings, {"dense": src}, parser=PARSER)
+    pipe.search("贵州茅台2025年研发投入合计是多少？", 5)
+    text, flt = src.calls[0]
+    assert text == "研发投入合计是多少？"  # 检索文本去掉了公司和年份
+    assert flt == QueryFilter(("600519",), (2025,))  # 过滤条件仍来自原问题
+    assert pipe.config["retriever"] == "filter+strip+dense"

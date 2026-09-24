@@ -1,7 +1,8 @@
 """可配置的检索流水线：阶段 5 的消融实验都通过它运行，一次只切换一个开关（config.retrieval）。
 
     问题
-     │ 1. 查询理解（use_filter）：识别公司、年份 -> 过滤条件
+     │ 1. 查询理解（use_filter）：识别公司、年份 -> 过滤条件；
+     │    strip_entities 时，检索文本去掉公司、年份，只保留"问什么"
      ▼
      │ 2. 多路召回（sources）：dense / bm25 / sparse，各取 top_n 个候选，都带同一个过滤条件
      ▼
@@ -60,7 +61,8 @@ class SearchPipeline:
         self.reranker = reranker
         multi = len(sources) > 1
         labels = source_labels or {}
-        parts = (["filter"] if parser else []) + [labels.get(n, n) for n in sources]
+        prefix = (["filter"] if parser else []) + (["strip"] if parser and self.cfg.strip_entities else [])
+        parts = prefix + [labels.get(n, n) for n in sources]
         # 写入 log.csv 对应列；没用到的组件对应的列留空
         self.config = {
             "parser": PARSER_VERSIONS[settings.parse.parser],
@@ -78,12 +80,16 @@ class SearchPipeline:
 
     def search(self, query: str, top_k: int) -> list[Chunk]:
         flt = self.parser.parse(query) if self.parser else None
+        text = self.parser.strip_entities(query) if (self.parser and self.cfg.strip_entities) else query
         if flt is not None:
-            logger.info("query parsed", extra={"stock_codes": list(flt.stock_codes), "years": list(flt.years)})
+            logger.info(
+                "query parsed",
+                extra={"stock_codes": list(flt.stock_codes), "years": list(flt.years), "search_text": text},
+            )
 
         # 需要融合或重排时，每路多取一些候选；否则直接取 top_k
         n = self.cfg.top_n if (len(self.sources) > 1 or self.reranker) else top_k
-        lists = [src.search(query, n, flt) for src in self.sources.values()]
+        lists = [src.search(text, n, flt) for src in self.sources.values()]
         results = lists[0] if len(lists) == 1 else rrf_fuse(lists, self.cfg.k_rrf)
 
         if self.reranker:

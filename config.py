@@ -124,6 +124,8 @@ class RetrievalSettings(BaseModel):
 
     # 查询理解：从问题中识别公司、年份，作为 Qdrant payload 过滤条件
     use_filter: bool = False
+    # 检索文本中去掉已识别的公司名和年份（它们已由过滤负责），只保留"问什么"；必须与 use_filter 同时开启
+    strip_entities: bool = False
     # 公司别名 -> 股票代码。manifest 中的公司简称和股票代码会自动识别，这里只放额外的常用简称
     company_aliases: dict[str, str] = {
         "茅台": "600519", "宁德": "300750", "中芯": "688981",
@@ -144,6 +146,13 @@ class RetrievalSettings(BaseModel):
         if not v or len(set(v)) != len(v):
             raise ValueError("sources 不能为空，且不能重复")
         return v
+
+    @model_validator(mode="after")
+    def _check_strip(self) -> RetrievalSettings:
+        # 不过滤却去掉公司和年份，等于把这两个条件彻底丢掉
+        if self.strip_entities and not self.use_filter:
+            raise ValueError("strip_entities 需要同时开启 use_filter")
+        return self
 
 
 class StoreSettings(BaseModel):

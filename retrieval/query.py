@@ -10,6 +10,9 @@
     年份  匹配"四位数字 + 年"，如"2024年""2024 年度""2025年报"；可以识别出多个
     过滤  识别到公司 -> stock_code 必须在其中；识别到年份 -> year 必须在其中；都没识别到 -> 不过滤
           年份按"严格口径"过滤：问 2024 年就只查 2024 年报（见 docs/decisions.md D-014）
+    去实体（strip_entities，E012 起）：已由过滤条件负责的公司名、年份从检索文本中去掉，只保留"问什么"。
+          原因见 experiments/badcases.md BC-005：问题里的"公司 + 年份"会主导向量相似度，
+          让封面、目录这类恰好提到公司和年份的 chunk 排到最前面。
 """
 
 from __future__ import annotations
@@ -21,6 +24,8 @@ from ingest.download import ManifestRow
 
 # 四位年份后紧跟"年"（中间允许空格），避免把金额、股数里的四位数字误认成年份
 _YEAR_RE = re.compile(r"((?:19|20)\d{2})\s*年")
+# 去实体时连同"年度"一起去掉："2024年度利润分配" -> "利润分配"
+_YEAR_STRIP_RE = re.compile(r"(?:19|20)\d{2}\s*年度?")
 
 
 @dataclass(frozen=True)
@@ -48,9 +53,24 @@ class QueryParser:
             names[row.stock_code] = row.stock_code
         names.update(aliases)
         self._names = names
+        # 去实体时按长度降序替换：先去掉"贵州茅台"，避免只去掉"茅台"后残留"贵州"
+        self._names_longest_first = sorted(names, key=len, reverse=True)
 
     def parse(self, query: str) -> QueryFilter:
         # "贵州茅台"和"茅台"会同时匹配，但映射到同一个代码，用集合去重
         codes = sorted({code for name, code in self._names.items() if name in query})
         years = sorted({int(y) for y in _YEAR_RE.findall(query)})
         return QueryFilter(stock_codes=tuple(codes), years=tuple(years))
+
+    def strip_entities(self, query: str) -> str:
+        """去掉问题中可识别的公司名、股票代码和年份，返回用于语义检索的文本。
+
+        例："贵州茅台2024年研发投入合计是多少？" -> "研发投入合计是多少？"
+        只去掉 parse 能识别的内容，所以与过滤条件一一对应：被去掉的信息一定已经体现在过滤里。
+        去完为空（问题只有公司和年份）时返回原问题，避免用空文本检索。
+        """
+        text = query
+        for name in self._names_longest_first:
+            text = text.replace(name, "")
+        text = _YEAR_STRIP_RE.sub("", text).strip()
+        return text or query
