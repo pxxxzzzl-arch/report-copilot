@@ -1,0 +1,32 @@
+[project]
+name = "report-copilot"
+version = "0.1.0"
+description = "上市公司年报智能分析助手：带页码引用的 PDF 问答 + Agent 计算对比 + 自建评测集"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+# 依赖按阶段逐步加入：用到哪个库时再 `uv add`，避免一开始就装 torch 等重依赖。
+dependencies = [
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "pymupdf>=1.28.2",
+]
+
+[dependency-groups]
+# 开发依赖：只在本地开发和测试时需要，不进生产镜像。
+dev = [
+    "pytest>=8.2",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# 把项目根目录加入 sys.path，这样测试里可以直接 `import config`、`from common.log import ...`
+pythonpath = ["."]
+addopts = "-ra -q"
+filterwarnings = [
+    # PyMuPDF 底层 SWIG 绑定在 Python 3.11+ 触发的弃用警告，与本项目代码无关
+    "ignore:builtin type [Ss]wig:DeprecationWarning",
+]
+
+[tool.uv]
+# 本项目是应用而不是可发布的库，不需要把自身打包安装。
+package = false

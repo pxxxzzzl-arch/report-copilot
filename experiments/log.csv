@@ -1,0 +1,1 @@
+exp_id,date,git_commit,改动说明,parser,chunker,chunk_size,overlap,retriever,fusion,k_rrf,reranker,top_k,top_n,goldset_version,n_questions,hit@5,recall@5,mrr@10,备注

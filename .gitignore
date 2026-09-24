@@ -1,0 +1,25 @@
+# 密钥：真实配置不提交，只提交 .env.example
+.env
+
+# 数据：原始 PDF 与解析中间结果体积大且可重新生成（保留占位文件）
+data/raw/*
+!data/raw/.gitkeep
+data/parsed/*
+!data/parsed/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+
+# Docker 数据卷（阶段 4 起本地服务的数据目录）
+deploy/volumes/
+
+# 编辑器 / 系统
+.idea/
+.vscode/
+.DS_Store
