@@ -36,6 +36,17 @@ uv run python -m ingest.download --codes 600519,000858,000568,300750,002594,6889
 uv run python -m ingest.precheck
 ```
 
+## 评测
+
+```bash
+# 校验评测集（逐题回到 PDF 原文核对 span）
+uv run python -m eval.validate_goldset
+
+# 检索评测。合成检索器用 --no-log，正式实验用 --desc 写明改动，结果追加到 experiments/log.csv
+uv run python -m eval.run_eval --retriever oracle --no-log
+uv run python -m eval.run_eval --retriever <name> --desc "改动说明"
+```
+
 ## 目录结构
 
 见 [AGENTS.md](AGENTS.md) 第 3 节；技术选择的理由见 [docs/decisions.md](docs/decisions.md)。

@@ -7,6 +7,9 @@ data/raw/*
 data/parsed/*
 !data/parsed/.gitkeep
 
+# 调试运行（--no-log）的评测明细，不进实验记录
+experiments/runs/_nolog_*
+
 # Python
 __pycache__/
 *.py[cod]

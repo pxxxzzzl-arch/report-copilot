@@ -72,6 +72,7 @@ report-copilot/
     validate_goldset.py
     metrics.py            # Hit@K / Recall@K / Precision@K / MRR / NDCG
     run_eval.py           # 检索评测
+    sanity_retrievers.py  # 合成检索器 oracle / random_page，用来检验评测流程本身
     run_gen_eval.py       # 生成评测
     judge.py              # LLM-as-a-Judge
   agent/
@@ -82,6 +83,7 @@ report-copilot/
     app.py
   experiments/
     log.csv               # 每次实验一行
+    runs/                 # 每次实验的逐题明细 {exp_id}.jsonl（召回结果、命中情况、各项指标）
     badcases.md           # Bad Case 记录
   docs/
     decisions.md          # 每个技术选择的理由
@@ -162,7 +164,7 @@ gold 带 `alt` 时，主位置或任一 alt 位置满足 1、2 条（第 3 条�
 - [x] 阶段 0：环境与骨架
 - [x] 阶段 1：数据准备与 PDF 预检（6 家公司 × 2024/2025 = 12 份，共 2425 页）
 - [x] 阶段 2：评测集 v1（60 题，已冻结，sha256 见 eval/goldset_schema.md；AI 起草 + 机器校验，建议人工抽查 10 题）
-- [ ] 阶段 3：评测脚本
+- [x] 阶段 3：评测脚本（oracle 各项满分、random 接近 0，流程已验证）
 - [ ] 阶段 4：v0 朴素基线
 - [ ] 阶段 5：检索消融实验
 - [ ] 阶段 6：生成侧评测
