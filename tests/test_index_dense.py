@@ -37,6 +37,16 @@ class KeywordEmbedder:
     encode_documents = _encode
     encode_queries = _encode
 
+    def _sparse(self, texts: list[str]) -> list[dict[int, float]]:
+        # 稀疏向量：关键词 i 出现则 token_id=i 的权重为 1
+        return [{i: 1.0 for i, k in enumerate(KEYWORDS) if k in t} for t in texts]
+
+    def encode_documents_with_sparse(self, texts: list[str]):
+        return self._encode(texts), self._sparse(texts)
+
+    def encode_queries_sparse(self, texts: list[str]):
+        return self._sparse(texts)
+
 
 def _chunk(i: int, text: str, page: int = 1) -> Chunk:
     return Chunk(
@@ -97,3 +107,27 @@ def test_dense_retriever_config() -> None:
     r = DenseRetriever(QdrantClient(":memory:"), "c", KeywordEmbedder(), s)
     assert r.config["chunk_size"] == 300 and r.config["overlap"] == 30
     assert r.config["retriever"] == "dense(fake-kw)"
+
+
+def test_sparse_index_and_search(client: QdrantClient) -> None:
+    from ingest.index import has_sparse
+    from retrieval.query import QueryFilter
+    from retrieval.sparse import SparseRetriever
+
+    emb = KeywordEmbedder()
+    ensure_collection(client, "s", DIM, with_sparse=True)
+    assert has_sparse(client, "s")
+    index_chunks(client, "s", CHUNKS, emb, batch=10, with_sparse=True)
+    r = SparseRetriever(client, "s", emb)
+    top = r.search("员工有多少", 5)
+    assert [c.chunk_id for c in top] == [CHUNKS[2].chunk_id]  # 只有含"员工"的 chunk 与查询有共同 token
+    assert top[0].extra["sparse_score"] == pytest.approx(1.0)  # 内积 = 1*1
+    assert r.search("没有任何关键词", 5) == []  # 查询稀疏向量为空
+    assert r.search("员工", 5, QueryFilter(("999999",), ())) == []  # 过滤条件同样生效
+
+
+def test_collection_without_sparse(client: QdrantClient) -> None:
+    from ingest.index import has_sparse
+
+    ensure_collection(client, "d", DIM)
+    assert not has_sparse(client, "d")

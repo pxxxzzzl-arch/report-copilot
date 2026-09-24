@@ -100,16 +100,29 @@ def build_pipeline(settings: Settings) -> SearchPipeline:
     from retrieval.bm25 import BM25Retriever
     from retrieval.dense import DenseRetriever
     from retrieval.embedding import build_embedder
+    from retrieval.sparse import SparseRetriever
 
     cfg = settings.retrieval
     client = QdrantClient(url=settings.store.qdrant_url)
     sources: dict[str, Source] = {}
     labels: dict[str, str] = {}
+    embedders: dict = {}
+
+    def bge():
+        # dense 与 sparse 共用同一个 bge-m3 实例：首次调用时加载，之后复用（避免重复加载 2GB 模型）
+        if "bge" not in embedders:
+            embedders["bge"] = build_embedder(settings.embedding, settings.index.max_length)
+        return embedders["bge"]
+
     for name in cfg.sources:
         if name == "dense":
-            embedder = build_embedder(settings.embedding, settings.index.max_length)
+            embedder = bge()
             sources[name] = DenseRetriever(client, settings.collection_name(), embedder, settings)
             labels[name] = f"dense({embedder.name})"
+        elif name == "sparse":
+            embedder = bge()
+            sources[name] = SparseRetriever(client, settings.collection_name(), embedder)
+            labels[name] = f"sparse({embedder.name})"
         elif name == "bm25":
             # BM25 与 dense 使用同一份 chunk（同一个切分标识），保证两路召回的候选可比、可融合
             chunks = read_chunks(chunks_path(settings.paths.parsed_dir, settings.chunk_key()))

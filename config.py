@@ -187,6 +187,8 @@ class IndexSettings(BaseModel):
 
     max_length: int = Field(default=1024, gt=0)  # 向量化时的最大 token 数，超出部分截断
     upsert_batch: int = Field(default=256, gt=0)  # 每批写入 Qdrant 的点数
+    # 同时写入 bge-m3 稀疏向量（供 sparse 召回通道使用）；与 dense 一次前向得到，几乎不增加建索引时间
+    with_sparse: bool = True
 
 
 class CninfoSettings(BaseModel):
