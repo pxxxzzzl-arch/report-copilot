@@ -126,6 +126,12 @@ class StoreSettings(BaseModel):
     redis_url: str = "redis://localhost:6379/0"
 
 
+class ParseSettings(BaseModel):
+    """解析器版本（阶段 5 消融变量之一）。"""
+
+    parser: Literal["v0"] = "v0"  # v0：PyMuPDF 文本块，不做任何清洗
+
+
 class ChunkSettings(BaseModel):
     """切分策略（阶段 5 消融实验的主要变量）。"""
 
@@ -142,7 +148,7 @@ class ChunkSettings(BaseModel):
 
     @property
     def key(self) -> str:
-        """切分配置的短标识，用于文件名和集合名，如 fixed_c500_o50。"""
+        """切分器配置的短标识，如 fixed_c500_o50（不含解析器版本，完整标识见 Settings.chunk_key）。"""
         return f"{self.chunker}_c{self.chunk_size}_o{self.overlap}"
 
 
@@ -219,6 +225,7 @@ class Settings(BaseSettings):
     embedding: EmbeddingSettings = EmbeddingSettings()
     reranker: RerankerSettings = RerankerSettings()
     store: StoreSettings = StoreSettings()
+    parse: ParseSettings = ParseSettings()
     chunk: ChunkSettings = ChunkSettings()
     index: IndexSettings = IndexSettings()
     cninfo: CninfoSettings = CninfoSettings()
@@ -226,13 +233,20 @@ class Settings(BaseSettings):
     eval: EvalSettings = EvalSettings()
     log: LogSettings = LogSettings()
 
-    def collection_name(self) -> str:
-        """Qdrant 集合名 = 基础名 + 切分配置 + 向量模型，不同消融配置的索引可以并存。
+    def chunk_key(self) -> str:
+        """切分结果的完整标识 = 解析器版本 + 切分器配置，如 v0_fixed_c500_o50。
 
-        例：report_chunks__fixed_c500_o50__bge-m3
+        解析器或切分参数任一不同，chunk 就不同，文件名、chunk_id、集合名都随之不同，互不覆盖。
+        """
+        return f"{self.parse.parser}_{self.chunk.key}"
+
+    def collection_name(self) -> str:
+        """Qdrant 集合名 = 基础名 + 切分标识 + 向量模型，不同消融配置的索引可以并存。
+
+        例：report_chunks__v0_fixed_c500_o50__bge-m3
         """
         model = self.embedding.model_name.split("/")[-1].lower()
-        return f"{self.store.qdrant_collection}__{self.chunk.key}__{model}"
+        return f"{self.store.qdrant_collection}__{self.chunk_key()}__{model}"
 
 
 @lru_cache(maxsize=1)

@@ -120,4 +120,4 @@ def test_embedding_model_source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
 
 
 def test_collection_name() -> None:
-    assert Settings(_env_file=None).collection_name() == "report_chunks__fixed_c500_o50__bge-m3"
+    assert Settings(_env_file=None).collection_name() == "report_chunks__v0_fixed_c500_o50__bge-m3"

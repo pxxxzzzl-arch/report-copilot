@@ -73,7 +73,7 @@ def _dense(settings: Settings, _items: list[dict]) -> Retriever:
         QdrantClient(url=settings.store.qdrant_url),
         settings.collection_name(),
         build_embedder(settings.embedding, settings.index.max_length),
-        settings.chunk,
+        settings,
     )
 
 

@@ -9,10 +9,10 @@ from dataclasses import replace
 
 from qdrant_client import QdrantClient
 
-from config import ChunkSettings
+from config import Settings
 from ingest.chunk import Chunk
 from ingest.index import DENSE_VECTOR
-from ingest.parse import PARSER_VERSION
+from ingest.parse import PARSER_VERSIONS
 from retrieval.embedding import Embedder
 
 
@@ -21,16 +21,16 @@ class DenseRetriever:
 
     name = "dense"
 
-    def __init__(self, client: QdrantClient, collection: str, embedder: Embedder, chunk_cfg: ChunkSettings) -> None:
+    def __init__(self, client: QdrantClient, collection: str, embedder: Embedder, settings: Settings) -> None:
         self.client = client
         self.collection = collection
         self.embedder = embedder
         # 写入 log.csv 对应列；未涉及的列（fusion、k_rrf、reranker、top_n）留空
         self.config = {
-            "parser": PARSER_VERSION,
-            "chunker": chunk_cfg.chunker,
-            "chunk_size": chunk_cfg.chunk_size,
-            "overlap": chunk_cfg.overlap,
+            "parser": PARSER_VERSIONS[settings.parse.parser],
+            "chunker": settings.chunk.chunker,
+            "chunk_size": settings.chunk.chunk_size,
+            "overlap": settings.chunk.overlap,
             "retriever": f"dense({embedder.name})",
             # 以下不在 log.csv 的列中，只记入逐题明细的元信息，便于复现
             "embed_device": getattr(embedder, "device", ""),

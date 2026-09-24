@@ -1,7 +1,7 @@
 """建索引：对 chunk 做向量化，写入 Qdrant。
 
 集合结构：
-    名称      config.Settings.collection_name()，如 report_chunks__fixed_c500_o50__bge-m3
+    名称      config.Settings.collection_name()，如 report_chunks__v0_fixed_c500_o50__bge-m3
               —— 切分配置或向量模型不同，就是不同的集合，消融实验的索引可以并存
     向量      命名向量 "dense"（1024 维，余弦距离）；阶段 5 加入 sparse 时再增加命名向量 "sparse"
     点 ID     uuid5(chunk_id)：同一个 chunk 每次得到同一个 ID，重复写入是覆盖而不是新增（幂等）
@@ -75,7 +75,7 @@ def main(argv: list[str] | None = None) -> None:
     settings = get_settings()
     setup_logging(settings.log.level, settings.log.json_format)
     collection = settings.collection_name()
-    chunks = read_chunks(chunks_path(settings.paths.parsed_dir, settings.chunk))
+    chunks = read_chunks(chunks_path(settings.paths.parsed_dir, settings.chunk_key()))
     client = QdrantClient(url=settings.store.qdrant_url)
 
     with trace_context(), timed("index_all", logger, collection=collection, n_chunks=len(chunks)) as info:

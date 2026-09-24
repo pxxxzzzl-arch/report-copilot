@@ -10,7 +10,7 @@ v0（parser_version = pymupdf-blocks-v0）刻意保持朴素，作为消融实�
 用法：
     uv run python -m ingest.parse                 # 解析 manifest 中的全部文档
     uv run python -m ingest.parse --doc 600519_2024
-输出：data/parsed/blocks/{doc_id}.jsonl
+输出：data/parsed/blocks/{parser}/{doc_id}.jsonl（parser 取自 config.parse.parser）
 """
 
 from __future__ import annotations
@@ -30,7 +30,8 @@ from ingest.download import read_manifest
 
 logger = logging.getLogger("ingest.parse")
 
-PARSER_VERSION = "pymupdf-blocks-v0"
+# 配置中的解析器短名 -> 写入 chunk.parser_version 的完整版本号
+PARSER_VERSIONS = {"v0": "pymupdf-blocks-v0"}
 BlockType = Literal["text", "title", "table", "image"]
 
 # PyMuPDF get_text("blocks") 返回元组 (x0, y0, x1, y1, text, block_no, block_type)，block_type：0 文本，1 图片
@@ -89,19 +90,21 @@ def read_blocks(path: Path) -> list[Block]:
         return [Block(**json.loads(line)) for line in f]
 
 
-def blocks_path(parsed_dir: Path, doc_id: str) -> Path:
-    return parsed_dir / "blocks" / f"{doc_id}.jsonl"
+def blocks_path(parsed_dir: Path, parser: str, doc_id: str) -> Path:
+    """不同解析器的结果分目录存放：data/parsed/blocks/{parser}/{doc_id}.jsonl。"""
+    return parsed_dir / "blocks" / parser / f"{doc_id}.jsonl"
 
 
 def run(doc_ids: list[str] | None = None) -> dict[str, int]:
     """解析指定文档（默认全部），返回 {doc_id: 块数}。"""
     settings = get_settings()
     manifest = read_manifest(settings.paths.manifest_path)
+    parser = settings.parse.parser
     counts: dict[str, int] = {}
     for doc_id in doc_ids or sorted(manifest):
-        with timed("parse", logger, doc_id=doc_id, parser=PARSER_VERSION) as info:
+        with timed("parse", logger, doc_id=doc_id, parser=PARSER_VERSIONS[parser]) as info:
             blocks = parse_pdf(settings.paths.raw_dir / manifest[doc_id].file_name, doc_id)
-            write_blocks(blocks, blocks_path(settings.paths.parsed_dir, doc_id))
+            write_blocks(blocks, blocks_path(settings.paths.parsed_dir, parser, doc_id))
             counts[doc_id] = info["n_blocks"] = len(blocks)
     return counts
 

@@ -9,7 +9,7 @@ v0 只有一种策略 fixed（固定字符长度 + 重叠）：
 
 用法：
     uv run python -m ingest.chunk        # 切分全部已解析文档，配置取自 config.chunk
-输出：data/parsed/chunks/{chunker_key}.jsonl，例如 fixed_c500_o50.jsonl
+输出：data/parsed/chunks/{chunk_key}.jsonl，例如 v0_fixed_c500_o50.jsonl
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from pathlib import Path
 from common.log import setup_logging, timed, trace_context
 from config import ChunkSettings, get_settings
 from ingest.download import ManifestRow, read_manifest
-from ingest.parse import PARSER_VERSION, Block, blocks_path, read_blocks
+from ingest.parse import PARSER_VERSIONS, Block, blocks_path, read_blocks
 
 logger = logging.getLogger("ingest.chunk")
 
@@ -52,7 +52,7 @@ class Chunk:
     table_id: str | None
     content_hash: str  # 文本的 sha256 前 16 位，用于去重和判断内容是否变化
     parser_version: str
-    chunker_name: str  # 切分配置标识，如 fixed_c500_o50
+    chunker_name: str  # 切分标识（解析器 + 切分器配置），如 v0_fixed_c500_o50
     embed_model: str = ""  # 写入索引时填写
     extra: dict = field(default_factory=dict)  # 预留给后续策略的附加信息
 
@@ -85,8 +85,13 @@ def window_spans(total: int, size: int, overlap: int) -> list[tuple[int, int]]:
         start += step
 
 
-def chunk_document(blocks: list[Block], meta: ManifestRow, cfg: ChunkSettings) -> list[Chunk]:
-    """对一份文档做固定长度切分。只使用文本块（图片块没有文字）。"""
+def chunk_document(
+    blocks: list[Block], meta: ManifestRow, cfg: ChunkSettings, chunk_key: str, parser_version: str
+) -> list[Chunk]:
+    """对一份文档做固定长度切分。只使用文本块（图片块没有文字）。
+
+    chunk_key（如 v0_fixed_c500_o50）写入 chunk_id 和 chunker_name；parser_version 写入 parser_version。
+    """
     text_blocks = [b for b in blocks if b.type != "image" and b.text]
     # 拼接长字符串，并记录每个块的起止偏移 [starts[i], ends[i])
     starts: list[int] = []
@@ -116,7 +121,7 @@ def chunk_document(blocks: list[Block], meta: ManifestRow, cfg: ChunkSettings) -
         idx = len(chunks)
         chunks.append(
             Chunk(
-                chunk_id=make_chunk_id(meta.doc_id, cfg.key, idx),
+                chunk_id=make_chunk_id(meta.doc_id, chunk_key, idx),
                 doc_id=meta.doc_id,
                 company=meta.company,
                 stock_code=meta.stock_code,
@@ -131,8 +136,8 @@ def chunk_document(blocks: list[Block], meta: ManifestRow, cfg: ChunkSettings) -
                 chunk_type="text",
                 table_id=None,
                 content_hash=hashlib.sha256(text.encode("utf-8")).hexdigest()[:16],
-                parser_version=PARSER_VERSION,
-                chunker_name=cfg.key,
+                parser_version=parser_version,
+                chunker_name=chunk_key,
             )
         )
     return chunks
@@ -150,22 +155,23 @@ def read_chunks(path: Path) -> list[Chunk]:
         return [Chunk(**json.loads(line)) for line in f]
 
 
-def chunks_path(parsed_dir: Path, cfg: ChunkSettings) -> Path:
-    return parsed_dir / "chunks" / f"{cfg.key}.jsonl"
+def chunks_path(parsed_dir: Path, chunk_key: str) -> Path:
+    return parsed_dir / "chunks" / f"{chunk_key}.jsonl"
 
 
 def run() -> list[Chunk]:
     """切分 manifest 中全部文档（需要先运行 ingest.parse），写出并返回全部 chunk。"""
     settings = get_settings()
-    cfg = settings.chunk
+    cfg, key, parser = settings.chunk, settings.chunk_key(), settings.parse.parser
     manifest = read_manifest(settings.paths.manifest_path)
     all_chunks: list[Chunk] = []
     for doc_id in sorted(manifest):
-        with timed("chunk", logger, doc_id=doc_id, chunker=cfg.key) as info:
-            chunks = chunk_document(read_blocks(blocks_path(settings.paths.parsed_dir, doc_id)), manifest[doc_id], cfg)
+        with timed("chunk", logger, doc_id=doc_id, chunker=key) as info:
+            blocks = read_blocks(blocks_path(settings.paths.parsed_dir, parser, doc_id))
+            chunks = chunk_document(blocks, manifest[doc_id], cfg, key, PARSER_VERSIONS[parser])
             info["n_chunks"] = len(chunks)
         all_chunks.extend(chunks)
-    write_chunks(all_chunks, chunks_path(settings.paths.parsed_dir, cfg))
+    write_chunks(all_chunks, chunks_path(settings.paths.parsed_dir, key))
     return all_chunks
 
 
@@ -173,7 +179,7 @@ def main(argv: list[str] | None = None) -> None:
     argparse.ArgumentParser(description="按 config.chunk 的配置切分全部已解析文档").parse_args(argv)
     settings = get_settings()
     setup_logging(settings.log.level, settings.log.json_format)
-    with trace_context(), timed("chunk_all", logger, chunker=settings.chunk.key) as info:
+    with trace_context(), timed("chunk_all", logger, chunker=settings.chunk_key()) as info:
         info["n_chunks"] = len(run())
 
 

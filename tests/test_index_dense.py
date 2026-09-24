@@ -7,7 +7,7 @@ import numpy as np
 import pytest
 from qdrant_client import QdrantClient
 
-from config import ChunkSettings
+from config import Settings
 from ingest.chunk import Chunk
 from ingest.index import ensure_collection, index_chunks, point_id
 from retrieval.dense import DenseRetriever
@@ -75,7 +75,7 @@ def test_index_and_search_roundtrip(client: QdrantClient) -> None:
     assert index_chunks(client, "c", CHUNKS, emb, batch=2) == 3
     assert emb.calls == 2  # 3 个 chunk、每批 2 个 -> 2 次编码
 
-    retriever = DenseRetriever(client, "c", emb, ChunkSettings())
+    retriever = DenseRetriever(client, "c", emb, Settings(_env_file=None))
     top = retriever.search("公司研发投入是多少？", top_k=2)
     assert len(top) == 2
     assert top[0].chunk_id == CHUNKS[1].chunk_id  # 含"研发投入"的 chunk 排第一
@@ -93,6 +93,7 @@ def test_reindex_is_idempotent(client: QdrantClient) -> None:
 
 
 def test_dense_retriever_config() -> None:
-    r = DenseRetriever(QdrantClient(":memory:"), "c", KeywordEmbedder(), ChunkSettings(chunk_size=300, overlap=30))
+    s = Settings(_env_file=None, chunk={"chunk_size": 300, "overlap": 30})
+    r = DenseRetriever(QdrantClient(":memory:"), "c", KeywordEmbedder(), s)
     assert r.config["chunk_size"] == 300 and r.config["overlap"] == 30
     assert r.config["retriever"] == "dense(fake-kw)"
