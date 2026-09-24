@@ -171,3 +171,10 @@ def test_select_subset() -> None:
     assert [it["id"] for it in select_subset(items, "all")] == ["q001", "q101", "q002"]
     assert [it["id"] for it in select_subset(items, "original")] == ["q001", "q002"]  # 缺省视为 original
     assert [it["id"] for it in select_subset(items, "paraphrase")] == ["q101"]
+
+
+def test_summary_by_variant() -> None:
+    items = [dict(ITEMS[0], variant="original"), dict(ITEMS[0], id="q101", variant="paraphrase")]
+    records, summary = evaluate(FakeRetriever(), items, KS)
+    assert [r["variant"] for r in records] == ["original", "paraphrase"]
+    assert summary["by_variant"]["original"]["n"] == 1 and summary["by_variant"]["paraphrase"]["n"] == 1

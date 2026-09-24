@@ -64,3 +64,17 @@ def test_load_scores(tmp_path: Path) -> None:
     path.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
     meta, scores = load_scores(path)
     assert meta["exp_id"] == "E001" and scores == {"q1": {"hit@5": 1.0}}
+
+
+def test_load_scores_subset(tmp_path: Path) -> None:
+    path = tmp_path / "E009.jsonl"
+    rows = [
+        {"meta": {}},
+        {"id": "q001", "variant": "original", "scores": {"hit@5": 1.0}},
+        {"id": "q101", "variant": "paraphrase", "scores": {"hit@5": 0.0}},
+        {"id": "q002", "scores": {"hit@5": 1.0}},  # 没有 variant 字段（v1 的明细）视为 original
+    ]
+    path.write_text("\n".join(json.dumps(r) for r in rows), encoding="utf-8")
+    assert set(load_scores(path)[1]) == {"q001", "q101", "q002"}
+    assert set(load_scores(path, "original")[1]) == {"q001", "q002"}
+    assert set(load_scores(path, "paraphrase")[1]) == {"q101"}

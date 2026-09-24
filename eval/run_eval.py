@@ -129,6 +129,7 @@ def evaluate_question(retriever: Retriever, item: dict, ks: Sequence[int]) -> di
     return {
         "id": item["id"],
         "type": item["type"],
+        "variant": item.get("variant", "original"),
         "question": item["question"],
         "n_gold": len(evidences),
         "latency_ms": info["elapsed_ms"],
@@ -178,14 +179,18 @@ def percentile(values: Sequence[float], p: float) -> float | None:
 
 def summarize(records: list[dict], n_skipped: int = 0) -> dict:
     by_type: dict[str, list[dict]] = defaultdict(list)
+    by_variant: dict[str, list[dict]] = defaultdict(list)
     for r in records:
         by_type[r["type"]].append(r["scores"])
+        by_variant[r.get("variant", "original")].append(r["scores"])
     latencies = [r["latency_ms"] for r in records]
     return {
         "n_questions": len(records),
         "n_out_of_scope_skipped": n_skipped,
         "overall": mean_scores([r["scores"] for r in records]),
         "by_type": {t: {"n": len(rows), **mean_scores(rows)} for t, rows in sorted(by_type.items())},
+        # 原题 / 口语改写两个子集分别汇总（v1 只有 original）
+        "by_variant": {v: {"n": len(rows), **mean_scores(rows)} for v, rows in sorted(by_variant.items())},
         "latency_ms": {"p50": percentile(latencies, 50), "p95": percentile(latencies, 95)},
     }
 
@@ -272,6 +277,8 @@ def write_details(path: Path, meta: dict, records: list[dict]) -> None:
 def format_table(summary: dict) -> str:
     """把总体与分题型指标排成对齐的文本表。"""
     rows = [("overall", summary["n_questions"], summary["overall"])]
+    if len(summary.get("by_variant", {})) > 1:  # 同时含原题和改写题时，分子集展示
+        rows += [(f"[{v}]", s["n"], s) for v, s in summary["by_variant"].items()]
     rows += [(t, s["n"], s) for t, s in summary["by_type"].items()]
     head = f"{'':<14}{'n':>4}" + "".join(f"{m:>13}" for m in DISPLAY_METRICS)
     lines = [head]

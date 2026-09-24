@@ -52,10 +52,11 @@ class MetricComparison:
         return "不显著"
 
 
-def load_scores(path: Path) -> tuple[dict, dict[str, dict[str, float]]]:
-    """读取逐题明细，返回 (元信息, {题目 id: 各项得分})。"""
+def load_scores(path: Path, subset: str = "all") -> tuple[dict, dict[str, dict[str, float]]]:
+    """读取逐题明细，返回 (元信息, {题目 id: 各项得分})；subset 为 original / paraphrase 时只取该子集。"""
     lines = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
-    return lines[0]["meta"], {r["id"]: r["scores"] for r in lines[1:]}
+    rows = [r for r in lines[1:] if subset == "all" or r.get("variant", "original") == subset]
+    return lines[0]["meta"], {r["id"]: r["scores"] for r in rows}
 
 
 def paired_bootstrap_ci(
@@ -108,9 +109,9 @@ def compare(
     return out
 
 
-def format_report(base_id: str, new_id: str, rows: list[MetricComparison]) -> str:
+def format_report(title: str, rows: list[MetricComparison]) -> str:
     lines = [
-        f"{base_id} -> {new_id}",
+        title,
         f"{'指标':<12}{'base':>8}{'new':>8}{'差值':>9}{'95% CI':>20}{'变好/变差':>11}{'符号检验p':>11}  结论",
     ]
     for r in rows:
@@ -130,16 +131,18 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("base", help="基线实验 id，如 E001")
     p.add_argument("new", help="新实验 id，如 E002")
     p.add_argument("--metrics", nargs="+", default=list(DEFAULT_METRICS))
+    p.add_argument("--subset", default="all", choices=("all", "original", "paraphrase"), help="只比较某个子集")
     args = p.parse_args(argv)
 
     runs_dir = get_settings().paths.experiments_dir / "runs"
-    base_meta, base = load_scores(runs_dir / f"{args.base}.jsonl")
-    new_meta, new = load_scores(runs_dir / f"{args.new}.jsonl")
+    base_meta, base = load_scores(runs_dir / f"{args.base}.jsonl", args.subset)
+    new_meta, new = load_scores(runs_dir / f"{args.new}.jsonl", args.subset)
     same = (base_meta.get("goldset_sha256"), base_meta.get("goldset_version")) == (
         new_meta.get("goldset_sha256"), new_meta.get("goldset_version"))  # fmt: skip
     if not same:
         raise SystemExit("两次实验使用的评测集或子集不同（sha256 / goldset_version 不一致），不能比较")
-    print(format_report(args.base, args.new, compare(base, new, args.metrics)))
+    title = f"{args.base} -> {args.new}" + ("" if args.subset == "all" else f"（子集 {args.subset}）")
+    print(format_report(title, compare(base, new, args.metrics)))
 
 
 if __name__ == "__main__":
