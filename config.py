@@ -112,8 +112,39 @@ class RerankerSettings(BaseModel):
     # 字段名 model_name 以 "model_" 开头，与 pydantic 保留的命名空间冲突会告警，这里关闭该检查
     model_config = ConfigDict(protected_namespaces=())
 
+    # local：本地通过 FlagEmbedding 推理（实验阶段使用，结果可复现）；
+    # api：托管的重排接口（预留开关，部署到无 GPU 服务器时再接入，见 docs/decisions.md）
+    provider: Literal["local", "api"] = "local"
     model_name: str = "BAAI/bge-reranker-v2-m3"
+    model_path: Path | None = Path("data/models/bge-reranker-v2-m3")  # 本地模型目录
     device: Device = "cpu"
+
+
+class RetrievalSettings(BaseModel):
+    """检索流水线（retrieval/search.py）。阶段 5 的消融实验通过这些开关逐个切换，一次只改一个。"""
+
+    # 查询理解：从问题中识别公司、年份，作为 Qdrant payload 过滤条件
+    use_filter: bool = False
+    # 公司别名 -> 股票代码。manifest 中的公司简称和股票代码会自动识别，这里只放额外的常用简称
+    company_aliases: dict[str, str] = {
+        "茅台": "600519", "宁德": "300750", "中芯": "688981",
+        "CATL": "300750", "BYD": "002594", "SMIC": "688981",
+    }  # fmt: skip
+    # 召回通道；多于一路时用 RRF 融合
+    sources: list[Literal["dense", "bm25", "sparse"]] = ["dense"]
+    fusion: Literal["rrf"] = "rrf"
+    k_rrf: int = Field(default=60, gt=0)  # RRF 平滑常数，取原论文默认值
+    top_n: int = Field(default=50, gt=0)  # 每路召回的候选数（融合或重排之前）
+    bm25_k1: float = Field(default=1.5, gt=0)  # 词频饱和参数
+    bm25_b: float = Field(default=0.75, ge=0, le=1)  # 文档长度归一化强度
+    rerank: bool = False
+
+    @field_validator("sources")
+    @classmethod
+    def _check_sources(cls, v: list[str]) -> list[str]:
+        if not v or len(set(v)) != len(v):
+            raise ValueError("sources 不能为空，且不能重复")
+        return v
 
 
 class StoreSettings(BaseModel):
@@ -228,6 +259,7 @@ class Settings(BaseSettings):
     parse: ParseSettings = ParseSettings()
     chunk: ChunkSettings = ChunkSettings()
     index: IndexSettings = IndexSettings()
+    retrieval: RetrievalSettings = RetrievalSettings()
     cninfo: CninfoSettings = CninfoSettings()
     precheck: PrecheckSettings = PrecheckSettings()
     eval: EvalSettings = EvalSettings()

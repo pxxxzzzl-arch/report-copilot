@@ -77,10 +77,17 @@ def _dense(settings: Settings, _items: list[dict]) -> Retriever:
     )
 
 
+def _pipeline(settings: Settings, _items: list[dict]) -> Retriever:
+    from retrieval.search import build_pipeline  # 延迟导入，理由同 _dense
+
+    return build_pipeline(settings)
+
+
 RETRIEVERS: dict[str, RetrieverFactory] = {
     "oracle": lambda s, items: OracleRetriever(items, _page_texts(s)),
     "random_page": lambda s, items: RandomPageRetriever(read_manifest(s.paths.manifest_path), _page_texts(s)),
-    "dense": _dense,
+    "dense": _dense,  # E001 使用；保留以便复现
+    "pipeline": _pipeline,  # 阶段 5 起的实验统一使用，组件由 config.retrieval 的开关决定
 }
 
 
