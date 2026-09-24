@@ -1,3 +1,5 @@
 exp_id,date,git_commit,改动说明,parser,chunker,chunk_size,overlap,retriever,fusion,k_rrf,reranker,top_k,top_n,goldset_version,n_questions,hit@5,recall@5,mrr@10,备注
 E001,2026-09-24,def85fa,v0 朴素基线：PyMuPDF 文本块 + 固定长度切分 500/50 + bge-m3 dense，无过滤/融合/重排,pymupdf-blocks-v0,fixed,500,50,dense(BAAI/bge-m3),,,,10,,v1,52,0.6538,0.5385,0.4838,embed_device=mps(fp16); 明细 experiments/runs/E001.jsonl
 E002,2026-09-24,0c9fe67,E001 + 公司/年份过滤（规则查询理解，严格年份口径）,pymupdf-blocks-v0,fixed,500,50,filter+dense(BAAI/bge-m3),,,,10,,v1,52,0.6731,0.5577,0.5431,embed_device=mps(fp16); 明细 experiments/runs/E002.jsonl
+E003,2026-09-24,8159c57,E002 + BM25（jieba 搜索模式，k1=1.5 b=0.75），RRF 融合 k=60，每路 top_n=50,pymupdf-blocks-v0,fixed,500,50,filter+dense(BAAI/bge-m3)+bm25(jieba),rrf,60,,10,50,v1,52,0.8462,0.7468,0.6622,embed_device=mps(fp16); 明细 experiments/runs/E003.jsonl
+E004,2026-09-24,8159c57-dirty,参考（不参与叠加）：仅 BM25 + 公司/年份过滤,pymupdf-blocks-v0,fixed,500,50,filter+bm25(jieba),,,,10,,v1,52,0.9423,0.9006,0.7428,明细 experiments/runs/E004.jsonl

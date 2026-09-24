@@ -186,10 +186,17 @@ def summarize(records: list[dict], n_skipped: int = 0) -> dict:
 
 
 def git_commit(cwd: Path = PROJECT_ROOT) -> str:
-    """当前提交的短哈希；工作区有未提交改动时加 -dirty；不在 git 仓库中时返回 nogit。"""
+    """当前提交的短哈希；工作区有未提交改动时加 -dirty；不在 git 仓库中时返回 nogit。
+
+    判断 dirty 时忽略 experiments/：那里是实验的输出（log.csv、逐题明细），不影响检索结果。
+    否则连续跑两个实验时，第二个会因为第一个的记录还没提交而被误标为 dirty（E004 就是这种情况）。
+    """
     try:
         head = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=cwd, capture_output=True, text=True, check=True)
-        status = subprocess.run(["git", "status", "--porcelain"], cwd=cwd, capture_output=True, text=True, check=True)
+        status = subprocess.run(
+            ["git", "status", "--porcelain", "--", ".", ":(exclude)experiments"],
+            cwd=cwd, capture_output=True, text=True, check=True,
+        )  # fmt: skip
     except (subprocess.CalledProcessError, FileNotFoundError):
         return "nogit"
     return head.stdout.strip() + ("-dirty" if status.stdout.strip() else "")
