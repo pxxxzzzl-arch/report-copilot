@@ -15,6 +15,7 @@ from eval.run_eval import (
     load_frozen_goldset,
     next_exp_id,
     percentile,
+    select_subset,
     write_details,
 )
 from eval.sanity_retrievers import OracleRetriever, RandomPageRetriever
@@ -163,3 +164,10 @@ def test_write_details_roundtrip(tmp_path: Path) -> None:
     lines = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
     assert lines[0]["meta"]["exp_id"] == "E001"
     assert [r["id"] for r in lines[1:]] == ["q001", "q002"]
+
+
+def test_select_subset() -> None:
+    items = [{"id": "q001"}, {"id": "q101", "variant": "paraphrase"}, {"id": "q002", "variant": "original"}]
+    assert [it["id"] for it in select_subset(items, "all")] == ["q001", "q101", "q002"]
+    assert [it["id"] for it in select_subset(items, "original")] == ["q001", "q002"]  # 缺省视为 original
+    assert [it["id"] for it in select_subset(items, "paraphrase")] == ["q101"]

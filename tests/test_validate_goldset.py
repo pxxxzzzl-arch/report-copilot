@@ -195,3 +195,33 @@ def test_pdf_page_texts_reads_and_normalizes(tmp_path: Path) -> None:
     loader = PdfPageTexts({"x": ManifestRow("x", "", "", 0, "x.pdf", 2, "", "", "", "")}, tmp_path)
     assert loader("x") == ["Revenue1,234.56", ""]
     assert loader("x") is loader("x")  # 第二次走缓存
+
+
+# ---------------- 改写题（v2） ----------------
+
+
+def _para(**kw) -> dict:
+    base = {**_item(), "id": "q101", "question": "A公司2024年卖了多少钱？", "variant": "paraphrase", "source_id": "q001"}
+    base.update(kw)
+    return base
+
+
+def _variant_errors(items: list[dict]) -> list[str]:
+    return [i.msg for i in validate(items, MANIFEST, page_texts).issues if i.level == "error"]
+
+
+def test_valid_paraphrase() -> None:
+    assert _variant_errors([_item(), _para()]) == []
+
+
+def test_paraphrase_must_match_source() -> None:
+    assert any("answer 必须与原题" in m for m in _variant_errors([_item(), _para(answer="别的答案")]))
+    assert any("source_id" in m for m in _variant_errors([_item(), _para(source_id="q999")]))
+    assert any("与原题相同" in m for m in _variant_errors([_item(), _para(question=_item()["question"])]))
+    assert any("未知 variant" in m for m in _variant_errors([_item(variant="other")]))
+
+
+def test_paraphrase_leaking_span_warns() -> None:
+    items = [_item(), _para(question="A公司2024年营业收入是1,234,567.89元吗？")]
+    warnings = [i.msg for i in validate(items, MANIFEST, page_texts).warnings]
+    assert any("gold 原文片段" in m for m in warnings)

@@ -44,7 +44,6 @@ class PathSettings(BaseModel):
     manifest_path: Path = Path("data/manifest.csv")  # 文档清单
     precheck_summary_path: Path = Path("data/precheck_summary.csv")  # PDF 预检汇总（每文档一行）
     experiments_dir: Path = Path("experiments")  # 实验记录 log.csv / badcases.md / runs/
-    goldset_path: Path = Path("eval/goldset.jsonl")  # 评测集
 
     @field_validator("*")
     @classmethod
@@ -211,12 +210,29 @@ class PrecheckSettings(BaseModel):
     garbled_ratio: float = Field(default=0.1, ge=0, le=1)  # 乱码字符占比超过它 -> 乱码页
 
 
+class FrozenGoldset(BaseModel):
+    """一个已冻结的评测集版本。"""
+
+    path: Path  # 相对路径以项目根目录为基准
+    sha256: str  # 冻结时的文件指纹；文件内容与之不符时 run_eval 拒绝运行
+
+
 class EvalSettings(BaseModel):
     """检索评测。"""
 
-    # 冻结的评测集版本及其 sha256：文件内容与之不符时 run_eval 拒绝运行，保证 log.csv 中同版本的结果可比
-    goldset_version: str = "v1"
-    goldset_sha256: str = "cc1f43caf4e3e629e27d266703912ca1df44d5d6b3a7c2182c17fb9167208d2e"
+    # 已冻结的评测集版本登记表（新增版本只能追加，已有条目不再修改），见 eval/goldset_schema.md
+    goldsets: dict[str, FrozenGoldset] = {
+        "v1": FrozenGoldset(
+            path=Path("eval/goldset.jsonl"),
+            sha256="cc1f43caf4e3e629e27d266703912ca1df44d5d6b3a7c2182c17fb9167208d2e",
+        ),
+        # v2 = v1 原题 60 道 + 口语化改写 60 道（variant=paraphrase）
+        "v2": FrozenGoldset(
+            path=Path("eval/goldset_v2.jsonl"),
+            sha256="c9cb0ba8be789ed36ee9ba82bef6680db7cfbfd8603fa99334e60e1e6ce2f816",
+        ),
+    }
+    goldset_version: str = "v1"  # run_eval 未指定 --goldset 时使用的版本
     # 计算指标的 K 值；检索深度取其中最大值。log.csv 固定记录 hit@5 / recall@5 / mrr@10，所以必须包含 5 和 10
     k_values: list[int] = [1, 3, 5, 10]
 
@@ -226,6 +242,17 @@ class EvalSettings(BaseModel):
         if not {5, 10} <= set(v) or min(v) < 1:
             raise ValueError("k_values 必须是正整数，且包含 5 和 10")
         return sorted(set(v))
+
+    @model_validator(mode="after")
+    def _check_default_version(self) -> EvalSettings:
+        if self.goldset_version not in self.goldsets:
+            raise ValueError(f"goldset_version={self.goldset_version} 不在已登记的版本 {sorted(self.goldsets)} 中")
+        return self
+
+    def goldset_file(self, version: str) -> Path:
+        """某个版本评测集的绝对路径。"""
+        path = self.goldsets[version].path
+        return path if path.is_absolute() else PROJECT_ROOT / path
 
 
 class LogSettings(BaseModel):

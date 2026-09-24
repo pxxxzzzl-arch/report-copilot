@@ -148,6 +148,16 @@ def evaluate_question(retriever: Retriever, item: dict, ks: Sequence[int]) -> di
     }
 
 
+SUBSETS = ("all", "original", "paraphrase")
+
+
+def select_subset(items: list[dict], subset: str) -> list[dict]:
+    """按 variant 取子集（v1 的题没有 variant 字段，视为 original）。"""
+    if subset == "all":
+        return items
+    return [it for it in items if it.get("variant", "original") == subset]
+
+
 def evaluate(retriever: Retriever, items: list[dict], ks: Sequence[int]) -> tuple[list[dict], dict]:
     """逐题评测，返回 (逐题记录, 汇总)。out_of_scope 题不参与检索指标。"""
     records = [evaluate_question(retriever, it, ks) for it in items if it["type"] != "out_of_scope"]
@@ -281,6 +291,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--desc", default="", help="改动说明（写入 log.csv；正式实验必填）")
     p.add_argument("--note", default="", help="备注（写入 log.csv）")
     p.add_argument("--no-log", action="store_true", help="不写 log.csv（用于合成检索器或调试）")
+    p.add_argument("--goldset", default=None, help="评测集版本，如 v1、v2（默认取 EVAL__GOLDSET_VERSION）")
+    p.add_argument("--subset", default="all", choices=SUBSETS, help="按 variant 取子集（v2 起有 paraphrase）")
     args = p.parse_args(argv)
     if not args.no_log and not args.desc:
         p.error("正式实验必须用 --desc 写明改动说明；调试请加 --no-log")
@@ -288,7 +300,13 @@ def main(argv: list[str] | None = None) -> int:
     settings = get_settings()
     setup_logging(settings.log.level, settings.log.json_format)
     ks = settings.eval.k_values
-    items = load_frozen_goldset(settings.paths.goldset_path, settings.eval.goldset_sha256)
+    version = args.goldset or settings.eval.goldset_version
+    if version not in settings.eval.goldsets:
+        p.error(f"未登记的评测集版本 {version}，可选：{sorted(settings.eval.goldsets)}")
+    frozen = settings.eval.goldsets[version]
+    items = select_subset(load_frozen_goldset(settings.eval.goldset_file(version), frozen.sha256), args.subset)
+    # 写入 log.csv 的版本标签：整份评测集写 "v2"，子集写 "v2:paraphrase"
+    version_label = version if args.subset == "all" else f"{version}:{args.subset}"
     retriever = RETRIEVERS[args.retriever](settings, items)
 
     log_path = settings.paths.experiments_dir / "log.csv"
@@ -304,8 +322,8 @@ def main(argv: list[str] | None = None) -> int:
         "trace_id": trace_id,
         "retriever": retriever.name,
         "retriever_config": retriever.config,
-        "goldset_version": settings.eval.goldset_version,
-        "goldset_sha256": settings.eval.goldset_sha256,
+        "goldset_version": version_label,
+        "goldset_sha256": frozen.sha256,
         "k_values": ks,
         "summary": summary,
     }
@@ -320,7 +338,7 @@ def main(argv: list[str] | None = None) -> int:
     if not args.no_log:
         with log_path.open(encoding="utf-8", newline="") as f:
             header = next(csv.reader(f))
-        row = build_log_row(header, exp_id, retriever, summary, ks, args.desc, args.note, settings.eval.goldset_version, commit)
+        row = build_log_row(header, exp_id, retriever, summary, ks, args.desc, args.note, version_label, commit)
         append_log(log_path, row)
         print(f"已写入 log.csv：{exp_id}  git={commit}")
     return 0

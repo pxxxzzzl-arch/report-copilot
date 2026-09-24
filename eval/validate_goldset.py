@@ -6,6 +6,8 @@
             multi_hop / calc / compare 至少 2 条 gold；compare 题的 gold 应来自至少 2 份文档
     位置    doc_id 在 manifest 中；page 在 [1, n_pages] 内（alt 中的位置同样检查）
     原文    归一化后的 span 必须出现在归一化后的该页文本中（主位置和每个 alt 位置都要满足）
+    改写    variant=paraphrase 的题（v2 起）：source_id 必须指向一道原题，题型、答案、gold 与原题完全一致，
+            问题文字必须不同；问题里出现 gold 的 span 原文时给出 warning（改写不应"泄露"答案片段）
     提示    span 过短（易误命中）；span 在文档其他页也出现、但未列入 alt（用 --suggest-alt 查看）
 
 用法：
@@ -32,6 +34,7 @@ from config import PROJECT_ROOT, get_settings
 from ingest.download import ManifestRow, read_manifest
 
 QUESTION_TYPES = ("fact", "table_number", "multi_hop", "calc", "compare", "out_of_scope")
+VARIANTS = ("original", "paraphrase")  # v2 起的可选字段 variant；缺省视为 original
 REQUIRED_FIELDS = ("id", "type", "question", "answer", "gold")
 MULTI_EVIDENCE_TYPES = ("multi_hop", "calc", "compare")  # 需要至少 2 条证据的题型
 MIN_SPAN_CHARS = 4  # 归一化后短于此长度的 span 很容易在无关文本中误命中
@@ -175,6 +178,30 @@ def check_item(item: dict, manifest: dict[str, ManifestRow], page_texts: PageTex
     return issues
 
 
+def check_variant(item: dict, by_id: dict[str, dict]) -> list[Issue]:
+    """校验改写题与原题的对应关系。"""
+    qid = str(item.get("id", "?"))
+    variant = item.get("variant", "original")
+    if variant not in VARIANTS:
+        return [Issue(qid, "error", f"未知 variant {variant!r}")]
+    if variant == "original":
+        return []
+    src = by_id.get(str(item.get("source_id")))
+    if src is None or src.get("variant", "original") != "original":
+        return [Issue(qid, "error", f"source_id {item.get('source_id')!r} 不是评测集中的原题")]
+    issues = [
+        Issue(qid, "error", f"改写题的 {f} 必须与原题 {src['id']} 一致")
+        for f in ("type", "answer", "gold")
+        if item.get(f) != src.get(f)
+    ]
+    if normalize(item["question"]) == normalize(src["question"]):
+        issues.append(Issue(qid, "error", "改写题的问题文字与原题相同"))
+    leaked = [g["span"] for g in item.get("gold", []) if normalize(g["span"]) in normalize(item["question"])]
+    if leaked:
+        issues.append(Issue(qid, "warning", f"改写后的问题包含 gold 原文片段 {leaked}"))
+    return issues
+
+
 # ---------------------------------------------------------------------------
 # 整体校验
 # ---------------------------------------------------------------------------
@@ -200,8 +227,10 @@ def validate(items: list[dict], manifest: dict[str, ManifestRow], page_texts: Pa
         if n > 1:
             report.issues.append(Issue(qid, "error", f"id 重复 {n} 次"))
 
+    by_id = {str(it.get("id")): it for it in items}
     for it in items:
         report.issues.extend(check_item(it, manifest, page_texts))
+        report.issues.extend(check_variant(it, by_id))
         report.type_counts[it.get("type")] += 1
         for doc_id in {g.get("doc_id") for g in it.get("gold") or []}:
             report.doc_counts[doc_id] += 1

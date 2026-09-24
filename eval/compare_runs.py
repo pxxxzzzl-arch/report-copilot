@@ -135,8 +135,10 @@ def main(argv: list[str] | None = None) -> None:
     runs_dir = get_settings().paths.experiments_dir / "runs"
     base_meta, base = load_scores(runs_dir / f"{args.base}.jsonl")
     new_meta, new = load_scores(runs_dir / f"{args.new}.jsonl")
-    if base_meta.get("goldset_sha256") != new_meta.get("goldset_sha256"):
-        raise SystemExit("两次实验使用的评测集不同（sha256 不一致），不能比较")
+    same = (base_meta.get("goldset_sha256"), base_meta.get("goldset_version")) == (
+        new_meta.get("goldset_sha256"), new_meta.get("goldset_version"))  # fmt: skip
+    if not same:
+        raise SystemExit("两次实验使用的评测集或子集不同（sha256 / goldset_version 不一致），不能比较")
     print(format_report(args.base, args.new, compare(base, new, args.metrics)))
 
 

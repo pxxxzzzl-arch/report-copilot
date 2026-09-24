@@ -12,7 +12,7 @@ from pydantic import ValidationError
 from config import PROJECT_ROOT, Settings, get_settings
 
 # config.py 中各配置分组对应的环境变量前缀
-_PREFIXES = {"PATHS", "LLM", "EMBEDDING", "RERANKER", "STORE", "CNINFO", "PRECHECK", "LOG"}
+_PREFIXES = {"PATHS", "LLM", "EMBEDDING", "RERANKER", "STORE", "PARSE", "CHUNK", "INDEX", "RETRIEVAL", "CNINFO", "PRECHECK", "EVAL", "LOG"}
 
 
 @pytest.fixture(autouse=True)
@@ -121,3 +121,24 @@ def test_embedding_model_source(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
 
 def test_collection_name() -> None:
     assert Settings(_env_file=None).collection_name() == "report_chunks__v0_fixed_c500_o50__bge-m3"
+
+
+def test_goldset_registry() -> None:
+    s = Settings(_env_file=None)
+    assert s.eval.goldset_file("v1") == PROJECT_ROOT / "eval" / "goldset.jsonl"
+    assert set(s.eval.goldsets) >= {"v1", "v2"}
+
+
+def test_goldset_version_must_be_registered(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EVAL__GOLDSET_VERSION", "v9")
+    with pytest.raises(ValidationError, match="v9"):
+        Settings(_env_file=None)
+
+
+def test_frozen_goldset_files_match_registered_sha() -> None:
+    """已登记的评测集文件必须与冻结时的 sha256 一致（防止有人修改了已冻结的评测集）。"""
+    import hashlib
+
+    s = Settings(_env_file=None)
+    for version, frozen in s.eval.goldsets.items():
+        assert hashlib.sha256(s.eval.goldset_file(version).read_bytes()).hexdigest() == frozen.sha256, version
