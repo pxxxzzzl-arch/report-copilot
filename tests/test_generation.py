@@ -15,7 +15,7 @@ from eval.gen_metrics import (
     numbers_match,
     strip_parentheses,
 )
-from eval.judge import build_judge_messages, parse_verdict
+from eval.judge import JUDGE_SYSTEM, build_judge_messages, parse_verdict, rule_verdict
 from eval.run_gen_eval import score_record, summarize
 from generation.answer import Citation, parse_answer
 from generation.citation import check_citations
@@ -224,3 +224,28 @@ def test_score_and_summarize() -> None:
     assert o["refusal_recall"] == 1.0 and o["false_refusal"] == 0.5
     assert o["num_match"] == 0.5 and o["cite_verified"] == 1.0 and o["faithfulness"] == 1.0
     assert o["judge_rule_agree"] == 1.0  # r1：评审满分且数值命中；r3：评审 0 分且数值未命中
+
+
+
+def test_rule_verdict() -> None:
+    assert rule_verdict(oos=True, refused=True, answered=True).correctness == 2
+    assert rule_verdict(oos=False, refused=True, answered=True).correctness == 0
+    v = rule_verdict(oos=False, refused=False, answered=False)
+    assert v.correctness == 0 and v.by_rule
+    assert rule_verdict(oos=False, refused=False, answered=True) is None  # 正常作答交给大模型
+    assert rule_verdict(oos=True, refused=False, answered=True) is None  # 应拒答却作答：交给大模型判断
+
+
+def test_judge_prompt_reason_first() -> None:
+    # 示例 JSON 中 reason 必须排在 correctness 前面（先理由后分数）
+    example = JUDGE_SYSTEM[JUDGE_SYSTEM.rfind("{"):]
+    assert example.index('"reason"') < example.index('"correctness"')
+
+
+def test_agreement_excludes_rule_judged() -> None:
+    item = {"type": "table_number", "answer": "695,376,735.81元", "gold": [{"doc_id": "A", "page": 2, "span": "x"}]}
+    r = score_record(item, _rec(refused=True, correctness=0))
+    r["judge"]["by_rule"] = True
+    r["type"], r["variant"] = "table_number", "original"
+    o = summarize([r])["overall"]
+    assert o["n_judge_rule"] == 0 and o["judge_rule_agree"] is None

@@ -98,7 +98,7 @@ class JudgeSettings(BaseModel):
 
     model: str = "deepseek-v4-pro"  # 与生成模型不同，减轻"偏爱自己答案"的问题（D-020）
     max_tokens: int = Field(default=512, gt=0)
-    prompt_version: str = "judge-v1"
+    prompt_version: str = "judge-v2"  # v2：先理由后分数 + 拒答类由规则判定（D-021）
     # deepseek-v4-pro 的价格（美元 / 百万 token，高峰价）
     price_input_cache_hit: float = 0.044
     price_input_cache_miss: float = 1.32

@@ -41,7 +41,7 @@ from pathlib import Path
 from common.log import setup_logging, timed, trace_context
 from config import PROJECT_ROOT, Settings, get_settings
 from eval.gen_metrics import citation_recall, numbers_match
-from eval.judge import judge_answer
+from eval.judge import judge_answer, rule_verdict
 from eval.run_eval import git_commit, load_frozen_goldset, next_exp_id, percentile, select_subset
 from eval.validate_goldset import PdfPageTexts
 from generation.answer import generate_answer
@@ -99,10 +99,11 @@ def summarize(records: list[dict]) -> dict:
         num = [float(r["metrics"]["num_match"]) for r in rs if "num_match" in r["metrics"]]
         oos = [r for r in rs if r["metrics"]["oos"]]
         ans_q = [r for r in rs if not r["metrics"]["oos"]]
+        # 只统计由大模型评审的题：规则判定的题（如拒答）两者天然一致，计入会虚高一致率
         agree = [
             float((r["judge"]["correctness"] == 2) == r["metrics"]["num_match"])
             for r in rs
-            if "num_match" in r["metrics"] and r["judge"]["ok"]
+            if "num_match" in r["metrics"] and r["judge"]["ok"] and not r["judge"].get("by_rule")
         ]
         return {
             "n": len(rs),
@@ -177,6 +178,10 @@ def run(settings: Settings, items: list[dict], retriever) -> list[dict]:
 
     # 5. 评审（并发）：只把系统实际引用的证据（有效编号）交给评审
     def judge_one(rec: dict):
+        answered = rec["format_ok"] and bool(rec["answer"].strip())
+        ruled = rule_verdict(rec["metrics"]["oos"], rec["refused"], answered)
+        if ruled is not None:  # 拒答、未作答：按规则判定，不调用大模型
+            return ruled, None
         chunks = contexts[rec["id"]]
         refs = sorted({c["ref"] for c in rec["citations"] if c["valid_ref"]})
         with trace_context(), timed("judge", logger, qid=rec["id"]):
@@ -186,7 +191,8 @@ def run(settings: Settings, items: list[dict], retriever) -> list[dict]:
     with ThreadPoolExecutor(gcfg.concurrency) as pool:
         verdicts = list(pool.map(judge_one, records))
     for rec, (v, res) in zip(records, verdicts):
-        rec["judge"] = {**asdict(v), "cost_usd": 0.0 if res.from_cache else round(judge_price.cost(res.usage), 6)}
+        cost = 0.0 if res is None or res.from_cache else round(judge_price.cost(res.usage), 6)
+        rec["judge"] = {**asdict(v), "cost_usd": cost}
     return records
 
 
