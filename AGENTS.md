@@ -169,7 +169,7 @@ gold 带 `alt` 时，主位置或任一 alt 位置满足 1、2 条（第 3 条�
 - [x] 阶段 2：评测集 v1（60 题，已冻结，sha256 见 eval/goldset_schema.md；AI 起草 + 机器校验，建议人工抽查 10 题）
 - [x] 阶段 3：评测脚本（oracle 各项满分、random 接近 0，流程已验证）
 - [x] 阶段 4：v0 朴素基线（E001：hit@5=0.6538 recall@5=0.5385 mrr@10=0.4838）
-- [ ] 阶段 5：检索消融实验
+- [x] 阶段 5：检索消融实验（最终 E013：v2 Recall@5=0.7869；查询理解贡献最大，见 docs/decisions.md D-019）
 - [ ] 阶段 6：生成侧评测
 - [ ] 阶段 7：LangGraph Agent
 - [ ] 阶段 8：FastAPI 服务

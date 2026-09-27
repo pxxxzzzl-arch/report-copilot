@@ -66,6 +66,18 @@ uv run python -m eval.run_eval --retriever oracle --no-log
 uv run python -m eval.run_eval --retriever <name> --desc "改动说明"
 ```
 
+## 检索实验结果（阶段 5）
+
+评测集 v2：52 道原题 + 52 道口语化改写题（共 104 道检索题）。所有数字都可以在 `experiments/log.csv` 中按实验编号找到。
+
+| 实验 | 配置 | Hit@5 | Recall@5 | MRR@10 |
+|---|---|---|---|---|
+| E005 + E001 | v0 朴素基线（dense）：改写题 / 原题 | 0.6154 / 0.6538 | 0.5064 / 0.5385 | 0.3975 / 0.4838 |
+| E013 | 最终配置：过滤 + 去实体 + dense/BM25/sparse（RRF）+ 去页眉 | 0.8365 | 0.7869 | 0.6532 |
+
+- 贡献最大的是查询理解（公司/年份过滤 + 检索文本去实体），逐个移除时各自贡献 Recall@5 +0.42 以上（95% CI 不跨 0）。
+- 局限：所有取舍都在同一份评测集上做出，绝对数值偏乐观；详见 `docs/decisions.md` D-019。
+
 ## 目录结构
 
 见 [AGENTS.md](AGENTS.md) 第 3 节；技术选择的理由见 [docs/decisions.md](docs/decisions.md)。
