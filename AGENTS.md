@@ -67,6 +67,7 @@ report-copilot/
     embedding.py          # 向量化接口（建索引与检索共用）；v0 为本地 bge-m3
     dense.py  sparse.py  bm25.py  fusion.py  rerank.py  search.py
   generation/
+    llm.py                # OpenAI 兼容接口调用层（JSON 输出、思考模式开关、本地缓存、计费）
     prompts.py  answer.py  citation.py
   eval/
     goldset.jsonl         # 评测集（人工审核过）
@@ -76,7 +77,9 @@ report-copilot/
     run_eval.py           # 检索评测
     sanity_retrievers.py  # 合成检索器 oracle / random_page，用来检验评测流程本身
     run_gen_eval.py       # 生成评测
-    judge.py              # LLM-as-a-Judge
+    gen_metrics.py        # 生成侧规则判分（数值单位换算、引用召回）
+    judge.py              # LLM-as-a-Judge（judge-v2：拒答类由规则判定）
+    compare_runs.py       # 两次实验的配对 bootstrap + 符号检验（检索 E### / 生成 G###）
   agent/
     state.py  graph.py  tools.py  fin_db.py
   api/
@@ -86,6 +89,8 @@ report-copilot/
   experiments/
     log.csv               # 每次实验一行
     runs/                 # 每次实验的逐题明细 {exp_id}.jsonl（召回结果、命中情况、各项指标）
+    gen_log.csv           # 生成实验（G###）每次一行
+    gen_runs/             # 生成实验的逐题明细
     badcases.md           # Bad Case 记录
   docs/
     decisions.md          # 每个技术选择的理由
@@ -170,7 +175,7 @@ gold 带 `alt` 时，主位置或任一 alt 位置满足 1、2 条（第 3 条�
 - [x] 阶段 3：评测脚本（oracle 各项满分、random 接近 0，流程已验证）
 - [x] 阶段 4：v0 朴素基线（E001：hit@5=0.6538 recall@5=0.5385 mrr@10=0.4838）
 - [x] 阶段 5：检索消融实验（最终 E013：v2 Recall@5=0.7869；查询理解贡献最大，见 docs/decisions.md D-019）
-- [ ] 阶段 6：生成侧评测
+- [x] 阶段 6：生成侧评测（最终 G002：评审正确率 0.9042、引用可核验率 1.0、拒答召回率 1.0；见 docs/decisions.md D-023）
 - [ ] 阶段 7：LangGraph Agent
 - [ ] 阶段 8：FastAPI 服务
 - [ ] 阶段 9：前端

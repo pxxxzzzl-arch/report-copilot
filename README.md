@@ -78,6 +78,24 @@ uv run python -m eval.run_eval --retriever <name> --desc "改动说明"
 - 贡献最大的是查询理解（公司/年份过滤 + 检索文本去实体），逐个移除时各自贡献 Recall@5 +0.42 以上（95% CI 不跨 0）。
 - 局限：所有取舍都在同一份评测集上做出，绝对数值偏乐观；详见 `docs/decisions.md` D-019。
 
+## 生成实验结果（阶段 6）
+
+G002：E013 检索 + 前 10 个 chunk + deepseek-flash（关闭思考）；评审 deepseek-v4-pro（judge-v2）。评测集 v2 共 120 题，数字可在 `experiments/gen_log.csv` 中找到。
+
+| 评审正确率 | 数值正确率 | 忠实度 | 引用可核验率 | 引用召回率 | 拒答召回率 | 误拒率 |
+|---|---|---|---|---|---|---|
+| 0.9042 | 0.8462 | 0.9796 | 1.0000 | 0.8365 | 1.0000 | 0.0577 |
+
+- 上下文从 10 个 chunk 减到 5 个，评审正确率确定下降（−0.0750，95% CI 不跨 0）；加重排无显著变化。
+- 主要失败是"该答没答"（证据在上下文里却拒答，或表格单位与数字被切开），见 `experiments/badcases.md` BC-007~BC-010。
+- 局限同阶段 5：所有取舍都在同一份评测集上做出；评审本身经过规则一致率与抽查校验（D-021）。
+
+```bash
+# 生成评测（检索配置沿用环境变量；Key 写在 .env 的 LLM__API_KEY）
+uv run python -m eval.run_gen_eval --goldset v2 --desc "改动说明"
+uv run python -m eval.compare_runs G002 G003
+```
+
 ## 目录结构
 
 见 [AGENTS.md](AGENTS.md) 第 3 节；技术选择的理由见 [docs/decisions.md](docs/decisions.md)。
