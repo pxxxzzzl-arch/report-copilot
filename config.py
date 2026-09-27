@@ -178,9 +178,11 @@ class ParseSettings(BaseModel):
 class ChunkSettings(BaseModel):
     """切分策略（阶段 5 消融实验的主要变量）。"""
 
-    chunker: Literal["fixed"] = "fixed"  # fixed：固定字符长度切分
+    # fixed：固定字符长度切分（不管结构边界）；block：以文本块为单位拼装，不在块中间切断
+    chunker: Literal["fixed", "block"] = "fixed"
     chunk_size: int = Field(default=500, gt=0)  # 每个 chunk 的最大字符数
-    overlap: int = Field(default=50, ge=0)  # 相邻 chunk 重叠的字符数
+    # fixed：相邻 chunk 重叠的字符数；block：只用于拆分单个超长块时的窗口重叠
+    overlap: int = Field(default=50, ge=0)
 
     @model_validator(mode="after")
     def _check_overlap(self) -> ChunkSettings:

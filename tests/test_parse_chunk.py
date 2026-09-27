@@ -6,7 +6,15 @@ import pymupdf
 import pytest
 
 from config import ChunkSettings
-from ingest.chunk import chunk_document, make_chunk_id, read_chunks, text_for_embedding, window_spans, write_chunks
+from ingest.chunk import (
+    chunk_document,
+    make_chunk_id,
+    pack_blocks,
+    read_chunks,
+    text_for_embedding,
+    window_spans,
+    write_chunks,
+)
 from ingest.download import ManifestRow
 from ingest.parse import Block, header_key, parse_pdf, read_blocks, remove_headers_footers, write_blocks
 
@@ -161,3 +169,30 @@ def test_parse_pdf_v1_removes_repeated_header(tmp_path: Path) -> None:
     v1 = [b.text for b in parse_pdf(tmp_path / "h.pdf", "d", "v1")]
     assert v0.count("ACME annual report") == 3
     assert v1 == ["body text 0", "body text 1", "body text 2"]
+
+
+# ---------------- block 切分（手算） ----------------
+
+
+def test_pack_blocks_hand_calculated() -> None:
+    # size=10：块长 4、4、4。块1+块2 = 4 + 1（分隔符）+ 4 = 9 <= 10；再加块3 = 14 > 10，另起一个 chunk
+    blocks = [_block(1, "aaaa", 0), _block(1, "bbbb", 1), _block(2, "cccc", 2)]
+    groups = pack_blocks(blocks, size=10, overlap=2)
+    assert [text for text, _ in groups] == ["aaaa\nbbbb", "cccc"]
+    assert [[b.text for b in bs] for _, bs in groups] == [["aaaa", "bbbb"], ["cccc"]]
+
+
+def test_pack_blocks_exact_fit_and_oversized() -> None:
+    # 恰好等于 size 时仍装得下：3 + 1 + 6 = 10
+    assert [t for t, _ in pack_blocks([_block(1, "abc"), _block(1, "defghi", 1)], size=10, overlap=0)] == ["abc\ndefghi"]
+    # 超长块（长 12 > 10）单独按窗口拆分：步长 10-2=8 -> [0,10)、[8,12)；前后的块不与它合并
+    blocks = [_block(1, "xx"), _block(1, "0123456789AB", 1), _block(1, "yy", 2)]
+    assert [t for t, _ in pack_blocks(blocks, size=10, overlap=2)] == ["xx", "0123456789", "89AB", "yy"]
+
+
+def test_block_chunker_never_splits_a_block() -> None:
+    # 与 fixed 的"数字被切断"用例对照：数字在自己的块里，block 策略不会把它切开
+    blocks = [_block(1, "前一段"), _block(1, "1,234,567.89"), _block(2, "后一段")]
+    chunks = chunk_document(blocks, META, ChunkSettings(chunker="block", chunk_size=20, overlap=0), KEY, PV)
+    assert any("1,234,567.89" in c.text for c in chunks)
+    assert [(c.page_start, c.page_end) for c in chunks] == [(1, 2)]  # 3+1+12+1+3 = 20，恰好装进一个 chunk

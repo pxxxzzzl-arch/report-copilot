@@ -7,6 +7,12 @@ v0 只有一种策略 fixed（固定字符长度 + 重叠）：
     窗口不管页边界和句子边界，所以一个 chunk 可能跨页，也可能把一个数字从中间切开。
     这是朴素基线的已知弱点，也是阶段 5 消融实验要改进的地方。
 
+block 策略（阶段 5，E014；针对 BC-004 的"语义稀释"）：
+    按阅读顺序把完整的文本块依次装进当前 chunk，装下一个块会超过 chunk_size 时就另起一个 chunk；
+    块永远不会被切开，所以表格的一行、一个数字、一句话都不会被拆到两个 chunk 里。
+    只有单个块本身就超过 chunk_size 时，才对这个块按固定窗口（chunk_size / overlap）拆分。
+    与 fixed 相比唯一的变量是"切分边界是否对齐块边界"；chunk 仍然可以跨页。
+
 用法：
     uv run python -m ingest.chunk        # 切分全部已解析文档，配置取自 config.chunk
 输出：data/parsed/chunks/{chunk_key}.jsonl，例如 v0_fixed_c500_o50.jsonl
@@ -85,38 +91,53 @@ def window_spans(total: int, size: int, overlap: int) -> list[tuple[int, int]]:
         start += step
 
 
+def pack_blocks(blocks: list[Block], size: int, overlap: int) -> list[tuple[str, list[Block]]]:
+    """block 策略：把完整的块依次装箱，返回 [(chunk 文本, 该 chunk 涉及的块), ...]。
+
+    例：size=10，块长 4、4、4 -> [块1+块2]（4+1+4=9）、[块3]（再加块3 会变成 14 > 10）
+    单个块长于 size 时，用 window_spans 把它单独拆成若干段（段与段之间有 overlap）。
+    """
+    groups: list[tuple[str, list[Block]]] = []
+    cur: list[Block] = []
+    cur_len = 0
+
+    def flush() -> None:
+        nonlocal cur, cur_len
+        if cur:
+            groups.append((BLOCK_SEPARATOR.join(b.text for b in cur), cur))
+        cur, cur_len = [], 0
+
+    for b in blocks:
+        n = len(b.text)
+        if n > size:  # 超长块：先结束当前 chunk，再把这个块单独按窗口拆开
+            flush()
+            groups.extend((b.text[s:e], [b]) for s, e in window_spans(n, size, overlap))
+            continue
+        added = n if not cur else n + len(BLOCK_SEPARATOR)
+        if cur_len + added > size:
+            flush()
+            added = n
+        cur.append(b)
+        cur_len += added
+    flush()
+    return groups
+
+
 def chunk_document(
     blocks: list[Block], meta: ManifestRow, cfg: ChunkSettings, chunk_key: str, parser_version: str
 ) -> list[Chunk]:
-    """对一份文档做固定长度切分。只使用文本块（图片块没有文字）。
+    """对一份文档切分（策略由 cfg.chunker 决定）。只使用文本块（图片块没有文字）。
 
     chunk_key（如 v0_fixed_c500_o50）写入 chunk_id 和 chunker_name；parser_version 写入 parser_version。
     """
     text_blocks = [b for b in blocks if b.type != "image" and b.text]
-    # 拼接长字符串，并记录每个块的起止偏移 [starts[i], ends[i])
-    starts: list[int] = []
-    ends: list[int] = []
-    parts: list[str] = []
-    pos = 0
-    for b in text_blocks:
-        starts.append(pos)
-        parts.append(b.text)
-        pos += len(b.text)
-        ends.append(pos)
-        pos += len(BLOCK_SEPARATOR)
-    full = BLOCK_SEPARATOR.join(parts)
-
+    if cfg.chunker == "block":
+        groups = pack_blocks(text_blocks, cfg.chunk_size, cfg.overlap)
+    else:
+        groups = fixed_groups(text_blocks, cfg.chunk_size, cfg.overlap)
     chunks: list[Chunk] = []
-    for start, end in window_spans(len(full), cfg.chunk_size, cfg.overlap):
-        text = full[start:end]
+    for text, covered in groups:
         if not text.strip():
-            continue
-        # 与窗口 [start, end) 有重叠的块：满足 starts[i] < end 且 ends[i] > start。
-        # starts 与 ends 都单调递增，用二分查找定位区间，避免每个窗口都遍历全部块。
-        lo = bisect.bisect_right(ends, start)  # 第一个 ends[i] > start 的块
-        hi = bisect.bisect_left(starts, end)  # 第一个 starts[i] >= end 的块
-        covered = text_blocks[lo:hi]
-        if not covered:  # 窗口只落在分隔符上（理论上不会出现，防御性处理）
             continue
         idx = len(chunks)
         chunks.append(
@@ -141,6 +162,33 @@ def chunk_document(
             )
         )
     return chunks
+
+
+def fixed_groups(text_blocks: list[Block], size: int, overlap: int) -> list[tuple[str, list[Block]]]:
+    """fixed 策略：在拼接后的长字符串上滑动固定窗口，返回 [(chunk 文本, 与窗口重叠的块), ...]。"""
+    # 拼接长字符串，并记录每个块的起止偏移 [starts[i], ends[i])
+    starts: list[int] = []
+    ends: list[int] = []
+    parts: list[str] = []
+    pos = 0
+    for b in text_blocks:
+        starts.append(pos)
+        parts.append(b.text)
+        pos += len(b.text)
+        ends.append(pos)
+        pos += len(BLOCK_SEPARATOR)
+    full = BLOCK_SEPARATOR.join(parts)
+
+    groups: list[tuple[str, list[Block]]] = []
+    for start, end in window_spans(len(full), size, overlap):
+        # 与窗口 [start, end) 有重叠的块：满足 starts[i] < end 且 ends[i] > start。
+        # starts 与 ends 都单调递增，用二分查找定位区间，避免每个窗口都遍历全部块。
+        lo = bisect.bisect_right(ends, start)  # 第一个 ends[i] > start 的块
+        hi = bisect.bisect_left(starts, end)  # 第一个 starts[i] >= end 的块
+        covered = text_blocks[lo:hi]
+        if covered:  # 窗口只落在分隔符上时 covered 为空（理论上不会出现，防御性处理）
+            groups.append((full[start:end], covered))
+    return groups
 
 
 def write_chunks(chunks: list[Chunk], path: Path) -> None:
