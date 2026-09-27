@@ -73,6 +73,36 @@ class LLMSettings(BaseModel):
     api_key: SecretStr = SecretStr("")
     model: str = ""
     timeout_s: float = Field(default=60.0, gt=0)
+    max_retries: int = Field(default=3, ge=0)  # 网络错误、限流、5xx 的重试次数（由 openai SDK 按指数退避执行）
+    # DeepSeek 默认开启思考模式；关闭后可以设 temperature，输出更稳定、更快、更便宜（docs/decisions.md D-020）
+    thinking: bool = False
+    temperature: float = Field(default=0.0, ge=0, le=2)  # 思考模式下该参数不生效，也不会发送
+    # 计价（美元 / 百万 token），按高峰价估算，结果偏保守；价格以服务商官网为准，调整时改这里
+    price_input_cache_hit: float = 0.006
+    price_input_cache_miss: float = 0.30
+    price_output: float = 1.20
+
+
+class GenerationSettings(BaseModel):
+    """生成：检索 -> 组装上下文 -> 大模型作答（带引用）。"""
+
+    context_k: int = Field(default=10, gt=0)  # 放进上下文的 chunk 数（取检索结果的前 context_k 个）
+    max_tokens: int = Field(default=1024, gt=0)  # 回答的最大输出 token 数；JSON 被截断会导致解析失败
+    prompt_version: str = "answer-v1"  # 提示词版本，写入实验记录；改提示词必须同时改这个版本号
+    concurrency: int = Field(default=4, gt=0)  # 调用大模型的并发数
+    cache_dir: Path = Path("data/cache/llm")  # 响应缓存：相同请求不重复调用，重跑可复现、不重复花钱
+
+
+class JudgeSettings(BaseModel):
+    """LLM 评审。与生成模型共用 base_url 和 api_key，只换模型。"""
+
+    model: str = "deepseek-v4-pro"  # 与生成模型不同，减轻"偏爱自己答案"的问题（D-020）
+    max_tokens: int = Field(default=512, gt=0)
+    prompt_version: str = "judge-v1"
+    # deepseek-v4-pro 的价格（美元 / 百万 token，高峰价）
+    price_input_cache_hit: float = 0.044
+    price_input_cache_miss: float = 1.32
+    price_output: float = 3.96
 
 
 class EmbeddingSettings(BaseModel):
@@ -321,6 +351,8 @@ class Settings(BaseSettings):
     chunk: ChunkSettings = ChunkSettings()
     index: IndexSettings = IndexSettings()
     retrieval: RetrievalSettings = RetrievalSettings()
+    generation: GenerationSettings = GenerationSettings()
+    judge: JudgeSettings = JudgeSettings()
     cninfo: CninfoSettings = CninfoSettings()
     precheck: PrecheckSettings = PrecheckSettings()
     eval: EvalSettings = EvalSettings()

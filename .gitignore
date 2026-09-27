@@ -8,9 +8,12 @@ data/parsed/*
 !data/parsed/.gitkeep
 # 本地模型权重（体积大，按 README 下载）
 data/models/
+# 大模型响应缓存（可能很多，且可重新生成）
+data/cache/
 
 # 调试运行（--no-log）的评测明细，不进实验记录
 experiments/runs/_nolog_*
+experiments/gen_runs/_nolog_*
 
 # Python
 __pycache__/

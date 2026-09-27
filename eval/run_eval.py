@@ -217,16 +217,16 @@ def git_commit(cwd: Path = PROJECT_ROOT) -> str:
     return head.stdout.strip() + ("-dirty" if status.stdout.strip() else "")
 
 
-def next_exp_id(log_path: Path) -> str:
-    """在 log.csv 已有的 E### 编号基础上加 1；没有记录时从 E001 开始。"""
+def next_exp_id(log_path: Path, prefix: str = "E") -> str:
+    """在日志中已有的 {prefix}### 编号基础上加 1；没有记录时从 {prefix}001 开始（检索用 E，生成用 G）。"""
     nums = [0]
     if log_path.exists():
         with log_path.open(encoding="utf-8", newline="") as f:
             for row in csv.DictReader(f):
-                m = re.fullmatch(r"E(\d+)", row.get("exp_id") or "")
+                m = re.fullmatch(rf"{prefix}(\d+)", row.get("exp_id") or "")
                 if m:
                     nums.append(int(m.group(1)))
-    return f"E{max(nums) + 1:03d}"
+    return f"{prefix}{max(nums) + 1:03d}"
 
 
 def build_log_row(
