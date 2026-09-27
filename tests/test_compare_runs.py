@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from eval.compare_runs import compare, load_scores, paired_bootstrap_ci, sign_test_p
+from eval.compare_runs import compare, gen_scores, load_scores, paired_bootstrap_ci, sign_test_p
 
 
 @pytest.mark.parametrize(
@@ -78,3 +78,11 @@ def test_load_scores_subset(tmp_path: Path) -> None:
     assert set(load_scores(path)[1]) == {"q001", "q101", "q002"}
     assert set(load_scores(path, "original")[1]) == {"q001", "q002"}
     assert set(load_scores(path, "paraphrase")[1]) == {"q101"}
+
+
+
+def test_gen_scores() -> None:
+    answerable = {"judge": {"correctness": 1}, "metrics": {"cite_recall": 0.5, "refused_ok": True}}
+    oos = {"judge": {"correctness": 2}, "metrics": {"refused_ok": False}}
+    assert gen_scores(answerable) == {"judge_correct": 0.5, "cite_recall": 0.5, "refused_ok": 1.0}
+    assert gen_scores(oos) == {"judge_correct": 1.0, "cite_recall": 1.0, "refused_ok": 0.0}

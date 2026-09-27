@@ -12,6 +12,8 @@
 用法：
     uv run python -m eval.compare_runs E001 E002
     uv run python -m eval.compare_runs E001 E002 --metrics hit@5 recall@10
+    uv run python -m eval.compare_runs G002 G003          # 生成实验（G 开头）自动读取 gen_runs，比较逐题得分：
+        judge_correct（评审分 / 2）、cite_recall（可回答题）、refused_ok（拒答判断是否正确）
 """
 
 from __future__ import annotations
@@ -52,11 +54,27 @@ class MetricComparison:
         return "不显著"
 
 
+GEN_METRICS = ("judge_correct", "cite_recall", "refused_ok")
+
+
+def gen_scores(r: dict) -> dict[str, float]:
+    """生成实验明细中一道题的逐题得分。cite_recall 只对可回答题有定义，应拒答题记为 1（不影响配对差值）。"""
+    m = r["metrics"]
+    return {
+        "judge_correct": (r["judge"]["correctness"] or 0) / 2,
+        "cite_recall": m.get("cite_recall", 1.0),
+        "refused_ok": float(m["refused_ok"]),
+    }
+
+
 def load_scores(path: Path, subset: str = "all") -> tuple[dict, dict[str, dict[str, float]]]:
-    """读取逐题明细，返回 (元信息, {题目 id: 各项得分})；subset 为 original / paraphrase 时只取该子集。"""
+    """读取逐题明细，返回 (元信息, {题目 id: 各项得分})；subset 为 original / paraphrase 时只取该子集。
+
+    检索实验的明细里每题有 scores 字段；生成实验的明细（含 judge 字段）用 gen_scores 计算。
+    """
     lines = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
     rows = [r for r in lines[1:] if subset == "all" or r.get("variant", "original") == subset]
-    return lines[0]["meta"], {r["id"]: r["scores"] for r in rows}
+    return lines[0]["meta"], {r["id"]: (r["scores"] if "scores" in r else gen_scores(r)) for r in rows}
 
 
 def paired_bootstrap_ci(
@@ -134,7 +152,9 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--subset", default="all", choices=("all", "original", "paraphrase"), help="只比较某个子集")
     args = p.parse_args(argv)
 
-    runs_dir = get_settings().paths.experiments_dir / "runs"
+    is_gen = args.base.startswith("G")
+    runs_dir = get_settings().paths.experiments_dir / ("gen_runs" if is_gen else "runs")
+    metrics = list(GEN_METRICS) if is_gen and args.metrics == list(DEFAULT_METRICS) else args.metrics
     base_meta, base = load_scores(runs_dir / f"{args.base}.jsonl", args.subset)
     new_meta, new = load_scores(runs_dir / f"{args.new}.jsonl", args.subset)
     same = (base_meta.get("goldset_sha256"), base_meta.get("goldset_version")) == (
@@ -142,7 +162,7 @@ def main(argv: list[str] | None = None) -> None:
     if not same:
         raise SystemExit("两次实验使用的评测集或子集不同（sha256 / goldset_version 不一致），不能比较")
     title = f"{args.base} -> {args.new}" + ("" if args.subset == "all" else f"（子集 {args.subset}）")
-    print(format_report(title, compare(base, new, args.metrics)))
+    print(format_report(title, compare(base, new, metrics)))
 
 
 if __name__ == "__main__":

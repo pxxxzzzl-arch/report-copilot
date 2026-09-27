@@ -210,7 +210,7 @@ def print_summary(summary: dict) -> None:
     o = summary["overall"]
     print(f"\n格式错误率 {fmt(o['format_error'])}  评审失败 {o['judge_fail']} 题  "
           f"评审与规则一致率 {fmt(o['judge_rule_agree'])}（{o['n_judge_rule']} 题）  "
-          f"生成延迟 p50={summary['gen_latency_ms']['p50']}ms  本次费用 ${summary['cost_usd']}")  # fmt: skip
+          f"生成延迟 p50={summary['gen_latency_ms']['p50'] or '-（全部命中缓存）'}ms  本次费用 ${summary['cost_usd']}")  # fmt: skip
 
 
 def append_gen_log(path: Path, row: dict) -> None:
