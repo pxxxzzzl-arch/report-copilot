@@ -191,3 +191,47 @@ def test_pipeline_passes_stripped_text_to_sources() -> None:
     assert text == "研发投入合计是多少？"  # 检索文本去掉了公司和年份
     assert flt == QueryFilter(("600519",), (2025,))  # 过滤条件仍来自原问题
     assert pipe.config["retriever"] == "filter+strip+dense"
+
+
+
+# ---------------- 重排 ----------------
+
+
+def test_rerank_by_scores_stable() -> None:
+    from retrieval.rerank import rerank_by_scores
+
+    a, b, c = (replace(_chunk(i, t), chunk_id=t) for i, t in enumerate("abc"))
+    out = rerank_by_scores([a, b, c], [0.1, 0.9, 0.1])
+    assert [x.chunk_id for x in out] == ["b", "a", "c"]  # a、c 同分，保持原顺序
+    assert out[0].extra["rerank_score"] == 0.9
+
+
+class FakeReranker:
+    name = "fake-reranker"
+
+    def __init__(self):
+        self.seen = None
+
+    def rerank(self, query, chunks):
+        self.seen = (query, [c.chunk_id for c in chunks])
+        return list(reversed(chunks))  # 倒序，便于验证确实用了重排结果
+
+
+def test_pipeline_reranks_top_n_with_search_text() -> None:
+    chunks = [replace(_chunk(i, t), chunk_id=t) for i, t in enumerate("abcdef")]
+    src = ListSource(chunks)
+    rr = FakeReranker()
+    settings = Settings(_env_file=None, retrieval={"use_filter": True, "strip_entities": True, "top_n": 4, "rerank": True})
+    pipe = SearchPipeline(settings, {"dense": src}, parser=PARSER, reranker=rr)
+    out = pipe.search("贵州茅台2025年研发投入是多少？", 2)
+    assert src.calls[0][0] == 4  # 需要重排时召回 top_n 个候选
+    assert rr.seen == ("研发投入是多少？", ["a", "b", "c", "d"])  # 重排用去实体后的检索文本
+    assert [c.chunk_id for c in out] == ["d", "c"]  # 取重排后的前 top_k
+    assert pipe.config["reranker"] == "fake-reranker" and pipe.config["top_n"] == 4
+
+
+def test_reranker_api_provider_not_implemented() -> None:
+    from retrieval.rerank import build_reranker
+
+    with pytest.raises(NotImplementedError):
+        build_reranker(Settings(_env_file=None, reranker={"provider": "api"}).reranker)

@@ -93,7 +93,8 @@ class SearchPipeline:
         results = lists[0] if len(lists) == 1 else rrf_fuse(lists, self.cfg.k_rrf)
 
         if self.reranker:
-            results = self.reranker.rerank(query, results[: self.cfg.top_n])
+            # 重排与召回使用同一段检索文本（开启 strip_entities 时不含公司和年份，原因见 BC-005）
+            results = self.reranker.rerank(text, results[: self.cfg.top_n])
         return results[:top_k]
 
 
@@ -106,6 +107,7 @@ def build_pipeline(settings: Settings) -> SearchPipeline:
     from retrieval.bm25 import BM25Retriever
     from retrieval.dense import DenseRetriever
     from retrieval.embedding import build_embedder
+    from retrieval.rerank import build_reranker
     from retrieval.sparse import SparseRetriever
 
     cfg = settings.retrieval
@@ -137,6 +139,5 @@ def build_pipeline(settings: Settings) -> SearchPipeline:
         else:
             raise NotImplementedError(f"召回通道 {name} 尚未实现")
     parser = QueryParser(read_manifest(settings.paths.manifest_path), cfg.company_aliases) if cfg.use_filter else None
-    if cfg.rerank:
-        raise NotImplementedError("重排尚未实现")
-    return SearchPipeline(settings, sources, parser=parser, source_labels=labels)
+    reranker = build_reranker(settings.reranker) if cfg.rerank else None
+    return SearchPipeline(settings, sources, parser=parser, reranker=reranker, source_labels=labels)

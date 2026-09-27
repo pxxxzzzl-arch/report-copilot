@@ -33,6 +33,19 @@ PROJECT_ROOT = Path(__file__).resolve().parent
 Device = Literal["cpu", "mps", "cuda"]
 
 
+def resolve_model_source(model_path: Path | None, model_name: str) -> str:
+    """模型加载用的名称或路径：本地目录存在时优先使用，否则用模型名（由库从 HuggingFace 下载）。
+
+    在这里（而不是字段校验器里）解析相对路径：pydantic 默认不校验字段默认值，
+    写在校验器里的话，默认值不会被转换成绝对路径。
+    """
+    if model_path is not None:
+        path = model_path if model_path.is_absolute() else PROJECT_ROOT / model_path
+        if path.exists():
+            return str(path)
+    return model_name
+
+
 class PathSettings(BaseModel):
     """数据与实验相关的路径。"""
 
@@ -86,16 +99,8 @@ class EmbeddingSettings(BaseModel):
 
     @property
     def model_source(self) -> str:
-        """传给模型加载函数的名称或路径：本地目录存在时优先使用，否则用 model_name。
-
-        在这里（而不是字段校验器里）解析相对路径：pydantic 默认不校验字段默认值，
-        写在校验器里的话，默认值不会被转换成绝对路径。
-        """
-        if self.model_path is not None:
-            path = self.model_path if self.model_path.is_absolute() else PROJECT_ROOT / self.model_path
-            if path.exists():
-                return str(path)
-        return self.model_name
+        """传给模型加载函数的名称或路径（见 resolve_model_source）。"""
+        return resolve_model_source(self.model_path, self.model_name)
 
     @model_validator(mode="after")
     def _check_api_base(self) -> EmbeddingSettings:
@@ -117,6 +122,18 @@ class RerankerSettings(BaseModel):
     model_name: str = "BAAI/bge-reranker-v2-m3"
     model_path: Path | None = Path("data/models/bge-reranker-v2-m3")  # 本地模型目录
     device: Device = "cpu"
+    # "问题 + 段落"拼接后的最大 token 数；FlagReranker 默认 512，chunk 本身约 500 字，放宽到 1024 避免截掉段落末尾
+    max_length: int = Field(default=1024, gt=0)
+    batch_size: int = Field(default=32, gt=0)
+
+    @field_validator("model_path", mode="before")
+    @classmethod
+    def _empty_to_none(cls, v: object) -> object:
+        return None if v == "" else v
+
+    @property
+    def model_source(self) -> str:
+        return resolve_model_source(self.model_path, self.model_name)
 
 
 class RetrievalSettings(BaseModel):
