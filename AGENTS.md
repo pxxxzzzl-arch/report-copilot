@@ -88,7 +88,11 @@ report-copilot/
     tools.py              # get_financial_metric / search_reports / calculator（ast 白名单 + Decimal）
     fin_db.py             # Postgres：fin_metrics 财务指标表、agent_tool_calls 审计表；build 子命令建表入库
   api/
-    main.py  deps.py  errors.py  middleware.py
+    main.py               # 应用工厂、lifespan、路由（/v1/chat、/v1/chat/stream SSE、/v1/threads、/healthz、/readyz）
+    deps.py               # 依赖容器 AppState、鉴权、Redis 限流、并发名额
+    errors.py             # 统一错误格式与异常归类
+    middleware.py         # 纯 ASGI 的 trace 中间件（X-Request-ID / X-Trace-Id、访问日志）
+    schemas.py            # 请求与响应模型
   ui/
     app.py
   experiments/
@@ -103,7 +107,7 @@ report-copilot/
     architecture.md
   tests/
   deploy/
-    docker-compose.dev.yml  # 开发用基础设施（阶段 4：Qdrant；阶段 7：Postgres，端口 5432 仅本机）
+    docker-compose.dev.yml  # 开发用基础设施（阶段 4：Qdrant；阶段 7：Postgres 5432；阶段 8：Redis 6380；均仅本机）
     docker-compose.yml  nginx.conf
   bench/
     load_test.py          # 推理压测
@@ -184,7 +188,7 @@ gold 带 `alt` 时，主位置或任一 alt 位置满足 1、2 条（第 3 条�
 - [x] 阶段 6：生成侧评测（最终 G002：评审正确率 0.9042、引用可核验率 1.0、拒答召回率 1.0；见 docs/decisions.md D-023）
 - [x] 留出集 v3（80 题，不参与调参）：阶段 6 后运行一次，检索 Recall@5 0.8554、生成评审正确率 0.8625（E021 / G005，D-025）；阶段 7 按预先登记第二次运行，Agent 0.9375（G008，D-028）
 - [x] 阶段 7：LangGraph Agent（G007：v2 评审正确率 0.9667，相对 G002 确定提升；v3 上 G008 0.9375；多轮对话带记忆 1.0 vs 不带 0.13；见 D-028）
-- [ ] 阶段 8：FastAPI 服务
+- [x] 阶段 8：FastAPI 服务（SSE 按节点推送进度、PostgresSaver 多轮、Redis 限流、可选 API Key；与 G007 一致性回归 10/10，见 D-029）
 - [ ] 阶段 9：前端
 - [ ] 阶段 10：部署上线
 - [ ] 阶段 11：vLLM 部署与压测

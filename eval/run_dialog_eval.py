@@ -29,7 +29,7 @@ from datetime import date
 from common.log import setup_logging, timed, trace_context
 from config import PROJECT_ROOT, Settings, get_settings
 from eval.run_eval import git_commit, load_frozen_goldset, next_exp_id
-from eval.run_gen_eval import agent_output, fmt, locked, print_summary, score_and_judge, summarize
+from eval.run_gen_eval import agent_output, fmt, print_summary, score_and_judge, summarize
 from eval.validate_goldset import PdfPageTexts
 from generation.llm import Price
 from ingest.download import read_manifest
@@ -63,7 +63,7 @@ def run(settings: Settings, dialogs: list[dict], targets: dict[str, dict], mode:
     gen_price = Price(settings.llm.price_input_cache_hit, settings.llm.price_input_cache_miss, settings.llm.price_output)
     store = PgFinStore(settings.store.postgres_dsn.get_secret_value())
     audit = store.log_tool_call if settings.agent.log_tool_calls else None
-    deps = build_deps(settings, locked(retriever.search), store, audit=audit)
+    deps = build_deps(settings, retriever.search, store, audit=audit)  # 检索与页面文本在 build_deps 内加锁
     graph = build_graph(deps, checkpointer=checkpointer)
     items = build_items(dialogs, targets)
 

@@ -32,7 +32,6 @@ import csv
 import json
 import logging
 import sys
-import threading
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
@@ -160,17 +159,6 @@ def summarize_agent(records: list[dict]) -> dict:
     }
 
 
-def locked(fn):
-    """给函数加一把锁：嵌入模型和页面文本缓存都不是线程安全的，Agent 并发运行时要串行访问。"""
-    lock = threading.Lock()
-
-    def wrapper(*args, **kwargs):
-        with lock:
-            return fn(*args, **kwargs)
-
-    return wrapper
-
-
 def answer_rag(settings: Settings, items: list[dict], retriever, gen_llm: LLMClient, gen_price: Price) -> dict[str, dict]:
     """阶段 6 的作答方式：检索前 context_k 个 chunk -> 一次调用作答。返回 {题号: 作答输出}。"""
     gcfg = settings.generation
@@ -211,8 +199,7 @@ def answer_agent(settings: Settings, items: list[dict], retriever, gen_price: Pr
 
     store = PgFinStore(settings.store.postgres_dsn.get_secret_value(), max_size=settings.generation.concurrency)
     audit = store.log_tool_call if settings.agent.log_tool_calls else None
-    deps = build_deps(settings, locked(retriever.search), store, audit=audit)
-    deps.page_texts = locked(deps.page_texts)
+    deps = build_deps(settings, retriever.search, store, audit=audit)  # 检索与页面文本在 build_deps 内加锁
     graph = build_graph(deps)  # 单轮评测不需要 checkpointer
 
     def run_one(it: dict):

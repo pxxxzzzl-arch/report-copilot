@@ -221,7 +221,8 @@ class StoreSettings(BaseModel):
     qdrant_collection: str = "report_chunks"
     # DSN 里可能带数据库密码，所以同样用 SecretStr
     postgres_dsn: SecretStr = SecretStr("postgresql://copilot@localhost:5432/copilot")
-    redis_url: str = "redis://localhost:6379/0"
+    # URL 里带 Redis 密码，同样用 SecretStr；开发用 Redis 映射到宿主机 6380（6379 被其他项目占用）
+    redis_url: SecretStr = SecretStr("redis://localhost:6380/0")
 
 
 class ParseSettings(BaseModel):
@@ -343,6 +344,19 @@ class EvalSettings(BaseModel):
         return path if path.is_absolute() else PROJECT_ROOT / path
 
 
+class ApiSettings(BaseModel):
+    """FastAPI 服务（阶段 8，docs/decisions.md D-029）。"""
+
+    # 访问密钥（请求头 X-API-Key）；为空时不校验，只用于本地开发，部署到公网必须配置（阶段 10）
+    keys: list[SecretStr] = []
+    rate_limit: int = Field(default=30, gt=0)  # 每个客户端在一个窗口内最多的问答请求数
+    rate_window_s: int = Field(default=60, gt=0)  # 限流窗口长度（秒），固定窗口计数
+    max_concurrent_runs: int = Field(default=8, gt=0)  # 同时运行的 Agent 数；超过时直接返回 503，不排队
+    max_question_chars: int = Field(default=500, gt=0)
+    # 大模型本地文件缓存：评测时开启保证可复现；服务默认关闭，重复提问也真实调用模型
+    llm_cache: bool = False
+
+
 class LogSettings(BaseModel):
     """日志。"""
 
@@ -378,6 +392,7 @@ class Settings(BaseSettings):
     generation: GenerationSettings = GenerationSettings()
     judge: JudgeSettings = JudgeSettings()
     agent: AgentSettings = AgentSettings()
+    api: ApiSettings = ApiSettings()
     cninfo: CninfoSettings = CninfoSettings()
     precheck: PrecheckSettings = PrecheckSettings()
     eval: EvalSettings = EvalSettings()

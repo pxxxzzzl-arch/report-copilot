@@ -21,7 +21,8 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+import threading
+from collections.abc import Callable, Iterator
 from dataclasses import asdict, dataclass
 
 from langchain_core.runnables import RunnableConfig
@@ -181,16 +182,71 @@ def answer_from_state(state: dict) -> Answer:
                   a["n_bad_citations"], a["error"])  # fmt: skip
 
 
-def run_turn(graph, question: str, max_steps: int, thread_id: str | None = None) -> dict:
-    """执行一轮问答，返回最终状态。thread_id 相同的多次调用共享历史（需要编译时传入 checkpointer）。"""
+def _turn_config(max_steps: int, thread_id: str | None) -> dict:
     config: dict = {"configurable": {"thread_id": thread_id}} if thread_id else {}
     # LangGraph 的递归上限按"经过的节点数"计：每次取证循环经过 agent、tools 两个节点，再加 5 个固定节点，留出余量
     config["recursion_limit"] = 2 * max_steps + 10
-    return graph.invoke({"question": question}, config=config)
+    return config
 
 
-def build_deps(settings, search: Callable[[str, int], list[Chunk]], store, audit: Callable[[dict], None] | None = None) -> AgentDeps:
-    """用真实组件组装依赖：search 为检索函数（通常是 SearchPipeline.search），store 为财务指标表（可为 None）。"""
+def run_turn(graph, question: str, max_steps: int, thread_id: str | None = None) -> dict:
+    """执行一轮问答，返回最终状态。thread_id 相同的多次调用共享历史（需要编译时传入 checkpointer）。"""
+    return graph.invoke({"question": question}, config=_turn_config(max_steps, thread_id))
+
+
+def stream_turn(graph, question: str, max_steps: int, thread_id: str | None = None) -> Iterator[dict]:
+    """执行一轮问答，边运行边产出进度事件（API 的 SSE 流式接口用它）。
+
+    用 LangGraph 的 stream_mode="updates"：每个节点运行结束时拿到它返回的更新，转成对用户有意义的事件：
+        rewrite   改写后的完整问题        retrieve  初始检索到的证据数
+        decide    第几步取证、要调用哪些工具（为空表示证据已足够，接下来作答）
+        tool      每次工具调用的结果       final     本轮最终状态（与 run_turn 的返回值字段相同，不含 history）
+    """
+    final: dict = {}
+    n_tools = 0
+    for update in graph.stream({"question": question}, config=_turn_config(max_steps, thread_id), stream_mode="updates"):
+        for node, upd in update.items():
+            if not isinstance(upd, dict):
+                continue
+            # 每轮字段在 rewrite 节点被整体重置，所以把各节点的更新依次合并，就得到本轮的完整状态
+            final.update({k: v for k, v in upd.items() if k != "history"})
+            if node == "rewrite":
+                yield {"event": "rewrite", "standalone": upd["standalone"]}
+            elif node == "retrieve":
+                yield {"event": "retrieve", "n_evidence": len(upd["evidence"])}
+            elif node == "agent":
+                calls = upd["messages"][-1].get("tool_calls") or []
+                yield {"event": "decide", "step": upd["steps"], "tool_calls": [c["function"]["name"] for c in calls]}
+            elif node == "tools":
+                for rec in upd["tool_log"][n_tools:]:
+                    yield {"event": "tool", **rec}
+                n_tools = len(upd["tool_log"])
+    yield {"event": "final", "state": final}
+
+
+def locked(fn: Callable) -> Callable:
+    """给函数加一把锁：嵌入模型和页面文本缓存都不是线程安全的，多个 Agent 并发运行时要串行访问。"""
+    lock = threading.Lock()
+
+    def wrapper(*args, **kwargs):
+        with lock:
+            return fn(*args, **kwargs)
+
+    return wrapper
+
+
+def build_deps(
+    settings,
+    search: Callable[[str, int], list[Chunk]],
+    store,
+    audit: Callable[[dict], None] | None = None,
+    llm_cache: bool = True,
+) -> AgentDeps:
+    """用真实组件组装依赖：search 为检索函数（通常是 SearchPipeline.search），store 为财务指标表（可为 None）。
+
+    检索和页面文本在这里加锁，因此返回的依赖可以被多个线程同时使用（评测并发、API 服务）。
+    llm_cache：是否使用大模型本地文件缓存（评测开启以保证可复现；API 服务默认关闭，见 config.api.llm_cache）。
+    """
     from eval.validate_goldset import PdfPageTexts
     from ingest.download import read_manifest
     from retrieval.query import QueryParser
@@ -198,12 +254,13 @@ def build_deps(settings, search: Callable[[str, int], list[Chunk]], store, audit
     manifest = read_manifest(settings.paths.manifest_path)
     parser = QueryParser(manifest, settings.retrieval.company_aliases)
     names = {r.stock_code: r.company for r in manifest.values()}
+    search = locked(search)  # 初始检索与 search_reports 共用同一把锁
     toolbox = ToolBox(search, parser, store, names, settings.agent.search_k)
     return AgentDeps(
-        llm=LLMClient(settings.llm, settings.generation.cache_dir),
+        llm=LLMClient(settings.llm, settings.generation.cache_dir if llm_cache else None),
         retrieve=search,
         tools=toolbox,
-        page_texts=PdfPageTexts(manifest, settings.paths.raw_dir),
+        page_texts=locked(PdfPageTexts(manifest, settings.paths.raw_dir)),
         cfg=settings.agent,
         context_k=settings.generation.context_k,
         answer_max_tokens=settings.generation.max_tokens,

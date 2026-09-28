@@ -36,7 +36,7 @@ uv run pytest
 # 来源：HuggingFace BAAI/bge-m3，或国内镜像 ModelScope BAAI/bge-m3（文件相同，可用 HuggingFace 公布的 sha256 校验）。
 # 目录不存在时，FlagEmbedding 会按 EMBEDDING__MODEL_NAME 自动从 HuggingFace 下载。
 
-# 启动 Qdrant 和 Postgres（开发用；Postgres 密码写在 .env 的 POSTGRES_PASSWORD 中，模板见 .env.example）
+# 启动 Qdrant、Postgres、Redis（开发用；密码写在 .env 的 POSTGRES_PASSWORD、REDIS_PASSWORD 中，模板见 .env.example）
 docker compose --env-file .env -f deploy/docker-compose.dev.yml up -d
 ```
 
@@ -68,6 +68,25 @@ uv run python -m agent.graph "比亚迪2024年归属于上市公司股东的净�
 固定骨架 + 工具循环：先用 E013 检索取 10 个 chunk，再由模型决定是否调用工具补充证据或计算，最后作答并校验引用。
 三个工具：`get_financial_metric`（财务指标表）、`search_reports`（检索）、`calculator`（ast 白名单 + Decimal 的安全计算器）。
 多轮对话由 PostgresSaver 保存状态，追问先结合历史改写成完整问题。设计见 `docs/decisions.md` D-026。
+
+## API 服务（阶段 8）
+
+```bash
+# 启动（检索配置与评测相同；首次启动加载 bge-m3 约十几秒）。接口文档：http://127.0.0.1:8000/docs
+env PARSE__PARSER=v1 EMBEDDING__DEVICE=mps RETRIEVAL__USE_FILTER=true RETRIEVAL__STRIP_ENTITIES=true \
+    RETRIEVAL__SOURCES='["dense","bm25","sparse"]' \
+    uv run uvicorn api.main:app --host 127.0.0.1 --port 8000 --no-access-log
+
+# 流式问答（SSE）：start → rewrite → retrieve → decide → tool… → answer → done
+curl -N -X POST http://127.0.0.1:8000/v1/chat/stream -H 'Content-Type: application/json' \
+    -d '{"question": "宁德时代2025年营业收入同比增长了多少？", "thread_id": "demo-1"}'
+# 同一 thread_id 追问；查看对话历史
+curl -X POST http://127.0.0.1:8000/v1/chat -H 'Content-Type: application/json' -d '{"question": "那比亚迪呢？", "thread_id": "demo-1"}'
+curl http://127.0.0.1:8000/v1/threads/demo-1
+```
+
+鉴权（`API__KEYS`，请求头 `X-API-Key`）、限流（Redis，默认每客户端每分钟 30 次）、并发上限（默认 8，满了返回 503）都在 `.env` 中配置。
+错误统一返回 `{"error": {code, message, trace_id}}`，响应头带 `X-Trace-Id`，可以用它在服务端日志中查到这次请求的全部记录。设计见 D-029。
 
 ## 评测
 
