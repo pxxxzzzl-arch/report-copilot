@@ -9,6 +9,8 @@
     改写    variant=paraphrase 的题（v2 起）：source_id 必须指向一道原题，题型、答案、gold 与原题完全一致，
             问题文字必须不同；问题里出现 gold 的 span 原文时给出 warning（改写不应"泄露"答案片段）
     提示    span 过短（易误命中）；span 在文档其他页也出现、但未列入 alt（用 --suggest-alt 查看）
+    查重    --against 指定已有评测集时（v3 起）：问题文字相同、或 gold 的（文档、页码、span）相同算 error；
+            gold 与已有评测集的 gold/alt 在同一页算 warning
 
 用法：
     uv run python -m eval.validate_goldset                  # 校验 eval/goldset.jsonl
@@ -207,6 +209,25 @@ def check_variant(item: dict, by_id: dict[str, dict]) -> list[Issue]:
 # ---------------------------------------------------------------------------
 
 
+def check_overlap(items: list[dict], others: list[dict]) -> list[Issue]:
+    """与已有评测集查重（留出集要求与开发集不重叠，见 docs/decisions.md D-024）。"""
+    other_questions = {normalize(it["question"]) for it in others}
+    other_spans = {(g["doc_id"], g["page"], normalize(g["span"])) for it in others for g in it.get("gold", [])}
+    other_pages = {(g["doc_id"], g["page"]) for it in others for g in it.get("gold", [])}
+    other_pages |= {(a["doc_id"], a["page"]) for it in others for g in it.get("gold", []) for a in g.get("alt", [])}
+    issues = []
+    for it in items:
+        qid = str(it.get("id"))
+        if normalize(it.get("question", "")) in other_questions:
+            issues.append(Issue(qid, "error", "问题与已有评测集中的题目相同"))
+        for gi, g in enumerate(it.get("gold", [])):
+            if (g["doc_id"], g["page"], normalize(g["span"])) in other_spans:
+                issues.append(Issue(qid, "error", f"gold[{gi}] 与已有评测集的 gold 完全相同"))
+            elif (g["doc_id"], g["page"]) in other_pages:
+                issues.append(Issue(qid, "warning", f"gold[{gi}] 与已有评测集的 gold/alt 在同一页 {g['doc_id']} p{g['page']}"))
+    return issues
+
+
 def load_goldset(path: Path) -> tuple[list[dict], list[Issue]]:
     """逐行读取 JSONL；空行跳过，解析失败的行记为 error。"""
     items, issues = [], []
@@ -262,6 +283,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--path", type=Path, default=DEFAULT_GOLDSET)
     p.add_argument("--suggest-alt", action="store_true", help="列出每条 span 在同公司各年报中出现的所有页")
     p.add_argument("--quiet", action="store_true", help="不打印 warning")
+    p.add_argument("--against", nargs="*", type=Path, default=[], help="已有评测集，用于查重（留出集用）")
     args = p.parse_args(argv)
 
     settings = get_settings()
@@ -271,6 +293,9 @@ def main(argv: list[str] | None = None) -> int:
     items, load_issues = load_goldset(args.path)
     report = validate(items, manifest, page_texts)
     report.issues[:0] = load_issues
+    if args.against:
+        others = [it for path in args.against for it in load_goldset(path)[0]]
+        report.issues.extend(check_overlap(items, others))
 
     if args.suggest_alt:
         suggest_alt(items, manifest, page_texts)

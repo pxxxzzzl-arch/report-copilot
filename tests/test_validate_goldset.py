@@ -10,7 +10,7 @@ import pymupdf
 import pytest
 
 from common.text import normalize
-from eval.validate_goldset import PdfPageTexts, check_item, find_span_pages, load_goldset, validate
+from eval.validate_goldset import PdfPageTexts, check_item, check_overlap, find_span_pages, load_goldset, validate
 from ingest.download import ManifestRow
 
 # 两份文档：A 公司 2024、2025 年报，各 3 页
@@ -225,3 +225,24 @@ def test_paraphrase_leaking_span_warns() -> None:
     items = [_item(), _para(question="A公司2024年营业收入是1,234,567.89元吗？")]
     warnings = [i.msg for i in validate(items, MANIFEST, page_texts).warnings]
     assert any("gold 原文片段" in m for m in warnings)
+
+
+
+# ---------------- 与已有评测集查重（v3） ----------------
+
+
+def test_check_overlap() -> None:
+    old = [_item(gold=[{"doc_id": "000001_2024", "page": 2, "span": "1,234,567.89",
+                        "alt": [{"doc_id": "000001_2025", "page": 2}]}])]  # fmt: skip
+    same_q = _item(id="q201")
+    same_span = _item(id="q202", question="换个问法", gold=[{"doc_id": "000001_2024", "page": 2, "span": "1,234,567.89"}])
+    same_page = _item(id="q203", question="另一个问题", gold=[{"doc_id": "000001_2025", "page": 2, "span": "2,000,000.00"}])
+    fresh = _item(id="q204", question="全新问题", gold=[{"doc_id": "000001_2025", "page": 3, "span": "张三"}])
+    issues = check_overlap([same_q, same_span, same_page, fresh], old)
+    by_id = {}
+    for i in issues:
+        by_id.setdefault(i.qid, []).append(i.level)
+    assert "error" in by_id["q201"]  # 问题相同（也包括 gold 相同）
+    assert by_id["q202"] == ["error"]  # gold 完全相同
+    assert by_id["q203"] == ["warning"]  # 与旧题的 alt 同页
+    assert "q204" not in by_id
