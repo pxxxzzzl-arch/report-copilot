@@ -1,8 +1,9 @@
 """大模型调用层：OpenAI 兼容接口（DeepSeek、vLLM 等）的一层薄封装。
 
 负责：
-    - JSON 输出（response_format=json_object）与解析；解析失败或返回空内容时不抛异常，而是在结果里标记
+    - chat_json：JSON 输出（response_format=json_object）与解析；解析失败或返回空内容时不抛异常，而是在结果里标记
       （DeepSeek 文档提示 JSON 模式偶尔会返回空内容）
+    - chat_tools：工具调用（OpenAI 格式的 tools / tool_calls，阶段 7 Agent 使用）
     - 关闭 / 开启思考模式（DeepSeek 通过 extra_body={"thinking": {"type": ...}} 控制）
     - 超时与重试（交给 openai SDK：网络错误、429、5xx 按指数退避重试 max_retries 次）
     - 记录 token 用量、费用估算和耗时（结构化日志，带 trace_id）
@@ -51,6 +52,35 @@ class LLMResult:
     @property
     def ok(self) -> bool:
         return self.data is not None
+
+
+@dataclass
+class ToolCall:
+    id: str  # 模型生成的调用编号，回传工具结果时必须带上
+    name: str
+    arguments: str  # 模型输出的参数 JSON 字符串（可能不合法，由调用方解析和容错）
+
+
+@dataclass
+class ToolTurn:
+    """一次工具调用模式的对话结果：模型要么调用工具（tool_calls 非空），要么直接回复文字。"""
+
+    content: str
+    tool_calls: list[ToolCall] = field(default_factory=list)
+    finish_reason: str | None = None
+    usage: Usage = field(default_factory=Usage)
+    latency_ms: float = 0.0
+    from_cache: bool = False
+
+    def assistant_message(self) -> dict:
+        """回传给模型的 assistant 消息（OpenAI 格式）：下一轮请求必须带上它，工具结果才能对上调用编号。"""
+        msg: dict[str, Any] = {"role": "assistant", "content": self.content or None}
+        if self.tool_calls:
+            msg["tool_calls"] = [
+                {"id": c.id, "type": "function", "function": {"name": c.name, "arguments": c.arguments}}
+                for c in self.tool_calls
+            ]
+        return msg
 
 
 @dataclass(frozen=True)
@@ -159,6 +189,54 @@ class LLMClient:
         )  # fmt: skip
         self._write_cache(key, result)
         return result
+
+    def chat_tools(self, messages: list[dict], tools: list[dict], max_tokens: int) -> ToolTurn:
+        """工具调用模式：模型自行决定调用哪些工具（可并行多个），或者不调用、直接回复。
+
+        与 chat_json 共用缓存目录；请求里多了 tools、没有 response_format，key 自然不同。
+        缓存保证重跑时工具调用序列完全一致（包括模型生成的调用编号），Agent 的整条轨迹可复现。
+        """
+        req: dict[str, Any] = {
+            "model": self.model,
+            "messages": messages,
+            "tools": tools,
+            "max_tokens": max_tokens,
+            "extra_body": {"thinking": {"type": "enabled" if self.cfg.thinking else "disabled"}},
+        }
+        if not self.cfg.thinking:
+            req["temperature"] = self.cfg.temperature
+        key = self.cache_key(req)
+        path = self._cache_path(key)
+        if path is not None and path.exists():
+            d = json.loads(path.read_text(encoding="utf-8"))
+            return ToolTurn(d["content"], [ToolCall(**c) for c in d["tool_calls"]], d["finish_reason"],
+                            Usage(**d["usage"]), d["latency_ms"], from_cache=True)  # fmt: skip
+
+        t0 = time.perf_counter()
+        resp = self._client.chat.completions.create(**req)
+        latency = round((time.perf_counter() - t0) * 1000, 1)
+        choice = resp.choices[0]
+        calls = [
+            ToolCall(id=c.id, name=c.function.name, arguments=c.function.arguments or "")
+            for c in (choice.message.tool_calls or [])
+        ]
+        u = resp.usage
+        usage = Usage(u.prompt_tokens, u.completion_tokens, getattr(u, "prompt_cache_hit_tokens", 0) or 0)
+        turn = ToolTurn(choice.message.content or "", calls, choice.finish_reason, usage, latency)
+        logger.info(
+            "llm tool call",
+            extra={
+                "model": self.model, "latency_ms": latency, "prompt_tokens": usage.prompt_tokens,
+                "completion_tokens": usage.completion_tokens, "cache_hit_tokens": usage.cache_hit_tokens,
+                "tool_calls": [c.name for c in calls], "finish_reason": choice.finish_reason,
+            },
+        )  # fmt: skip
+        if path is not None and (calls or turn.content):  # 空回复不缓存，下次重试
+            path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {"content": turn.content, "tool_calls": [c.__dict__ for c in calls],
+                       "finish_reason": turn.finish_reason, "usage": usage.__dict__, "latency_ms": latency}  # fmt: skip
+            path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        return turn
 
     # ---------------- 本地缓存 ----------------
 

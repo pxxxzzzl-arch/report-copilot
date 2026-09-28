@@ -93,6 +93,18 @@ class GenerationSettings(BaseModel):
     cache_dir: Path = Path("data/cache/llm")  # 响应缓存：相同请求不重复调用，重跑可复现、不重复花钱
 
 
+class AgentSettings(BaseModel):
+    """LangGraph Agent（阶段 7）：固定先检索，再由模型决定是否调用工具补充证据或计算（docs/decisions.md D-026）。"""
+
+    prompt_version: str = "agent-v1"  # 取证提示词与最终作答提示词的版本；改提示词必须同时改这个版本号
+    max_steps: int = Field(default=4, gt=0)  # 取证阶段最多调用几次大模型（每次可以并行发出多个工具调用）
+    search_k: int = Field(default=5, gt=0)  # search_reports 工具每次返回的 chunk 数
+    tool_max_tokens: int = Field(default=512, gt=0)  # 取证阶段每次调用的最大输出 token 数
+    rewrite_max_tokens: int = Field(default=256, gt=0)  # 多轮对话中把追问改写成完整问题
+    max_history_turns: int = Field(default=3, gt=0)  # 改写追问时参考的最近几轮对话
+    log_tool_calls: bool = True  # 工具调用写入 Postgres 的 agent_tool_calls 表（审计）
+
+
 class JudgeSettings(BaseModel):
     """LLM 评审。与生成模型共用 base_url 和 api_key，只换模型。"""
 
@@ -301,6 +313,13 @@ class EvalSettings(BaseModel):
             sha256="068ff19b14bba548bc7a16a3b96ad4fab82793020fe57a5c088c01e2cb5544c8",
         ),
     }
+    # 多轮对话评测集（阶段 7，D-027）：每组最后一轮的参考答案和 gold 取自 v1 的对应题目
+    dialogs: dict[str, FrozenGoldset] = {
+        "dialogs_v1": FrozenGoldset(
+            path=Path("eval/dialogs_v1.jsonl"),
+            sha256="f7d4410dc9962f416cfa0c899b73f2b9df0091f652bc5f2aced87926ad74cb06",
+        ),
+    }
     goldset_version: str = "v1"  # run_eval 未指定 --goldset 时使用的版本
     # 计算指标的 K 值；检索深度取其中最大值。log.csv 固定记录 hit@5 / recall@5 / mrr@10，所以必须包含 5 和 10
     k_values: list[int] = [1, 3, 5, 10]
@@ -358,6 +377,7 @@ class Settings(BaseSettings):
     retrieval: RetrievalSettings = RetrievalSettings()
     generation: GenerationSettings = GenerationSettings()
     judge: JudgeSettings = JudgeSettings()
+    agent: AgentSettings = AgentSettings()
     cninfo: CninfoSettings = CninfoSettings()
     precheck: PrecheckSettings = PrecheckSettings()
     eval: EvalSettings = EvalSettings()

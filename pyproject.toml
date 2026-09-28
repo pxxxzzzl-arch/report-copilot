@@ -8,7 +8,12 @@ requires-python = ">=3.11,<3.12"
 dependencies = [
     "flagembedding==1.4.2",
     "jieba>=0.42",
+    "langgraph==1.2.12",
+    "langgraph-checkpoint-postgres==3.1.2",
     "openai>=1.40",
+    "pdfplumber>=0.11",
+    "psycopg-pool>=3.2",
+    "psycopg[binary]>=3.2",
     "pydantic>=2.7",
     "pydantic-settings>=2.3",
     "pymupdf>=1.28.2",

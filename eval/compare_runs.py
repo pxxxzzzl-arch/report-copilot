@@ -12,7 +12,7 @@
 用法：
     uv run python -m eval.compare_runs E001 E002
     uv run python -m eval.compare_runs E001 E002 --metrics hit@5 recall@10
-    uv run python -m eval.compare_runs G002 G003          # 生成实验（G 开头）自动读取 gen_runs，比较逐题得分：
+    uv run python -m eval.compare_runs G002 G003          # 生成实验（G 开头）和多轮对话实验（D 开头）自动读取 gen_runs，比较逐题得分：
         judge_correct（评审分 / 2）、cite_recall（可回答题）、refused_ok（拒答判断是否正确）
 """
 
@@ -152,7 +152,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--subset", default="all", choices=("all", "original", "paraphrase"), help="只比较某个子集")
     args = p.parse_args(argv)
 
-    is_gen = args.base.startswith("G")
+    is_gen = args.base[0] in "GD"  # G：生成实验；D：多轮对话实验（明细格式相同）
     runs_dir = get_settings().paths.experiments_dir / ("gen_runs" if is_gen else "runs")
     metrics = list(GEN_METRICS) if is_gen and args.metrics == list(DEFAULT_METRICS) else args.metrics
     base_meta, base = load_scores(runs_dir / f"{args.base}.jsonl", args.subset)

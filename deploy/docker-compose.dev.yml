@@ -1,8 +1,9 @@
 # 本地开发用的基础设施（与阶段 10 的生产部署文件 docker-compose.yml 分开）。
-# 用到哪个服务才加哪个：阶段 4 只需要 Qdrant；Postgres / Redis 在阶段 7、8 加入。
+# 用到哪个服务才加哪个：阶段 4 加入 Qdrant，阶段 7 加入 Postgres；Redis 在阶段 8 加入。
 #
-#   docker compose -f deploy/docker-compose.dev.yml up -d
-#   docker compose -f deploy/docker-compose.dev.yml down        # 停止（数据保留在 deploy/volumes/）
+# 在项目根目录执行（--env-file 让 compose 从 .env 读取 POSTGRES_PASSWORD，密码不写进本文件）：
+#   docker compose --env-file .env -f deploy/docker-compose.dev.yml up -d
+#   docker compose --env-file .env -f deploy/docker-compose.dev.yml down   # 停止（数据保留在 deploy/volumes/）
 
 services:
   qdrant:
@@ -14,4 +15,24 @@ services:
       - "6334:6334"   # gRPC
     volumes:
       - ./volumes/qdrant:/qdrant/storage   # 持久化，容器重建后索引不丢
+    restart: unless-stopped
+
+  postgres:
+    # 财务指标表、工具调用记录、LangGraph checkpoint（阶段 7）
+    image: postgres:17.6
+    container_name: report-copilot-postgres
+    environment:
+      POSTGRES_USER: copilot
+      POSTGRES_DB: copilot
+      # 只引用这一个变量；.env 里的其他密钥（如大模型 API Key）不会进入容器
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}
+    ports:
+      - "127.0.0.1:5432:5432"   # 只监听本机；5433 已被其他项目的 Postgres 占用，这里用默认端口
+    volumes:
+      - ./volumes/postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U copilot -d copilot"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
     restart: unless-stopped

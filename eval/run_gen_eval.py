@@ -1,6 +1,6 @@
 """生成评测：检索 -> 作答（带引用）-> 引用校验 -> 规则判分 + LLM 评审 -> 汇总与记录。
 
-用法（检索配置沿用环境变量，例如阶段 5 的最终配置 E013）：
+用法（检索配置沿用环境变量，例如阶段 5 的最终配置 E013；加 --answerer agent 改用阶段 7 的 LangGraph Agent）：
     env PARSE__PARSER=v1 EMBEDDING__DEVICE=mps RETRIEVAL__USE_FILTER=true RETRIEVAL__STRIP_ENTITIES=true \\
         RETRIEVAL__SOURCES='["dense","bm25","sparse"]' \\
         uv run python -m eval.run_gen_eval --goldset v2 --desc "G001 基线"
@@ -32,6 +32,7 @@ import csv
 import json
 import logging
 import sys
+import threading
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
@@ -46,7 +47,7 @@ from eval.run_eval import git_commit, load_frozen_goldset, next_exp_id, percenti
 from eval.validate_goldset import PdfPageTexts
 from generation.answer import generate_answer
 from generation.citation import check_citations
-from generation.llm import LLMClient, Price
+from generation.llm import LLMClient, Price, Usage
 from ingest.download import read_manifest
 
 logger = logging.getLogger("eval.run_gen_eval")
@@ -132,48 +133,156 @@ def summarize(records: list[dict]) -> dict:
             "p50": percentile([r["gen"]["latency_ms"] for r in records if not r["gen"]["from_cache"]], 50),
             "p95": percentile([r["gen"]["latency_ms"] for r in records if not r["gen"]["from_cache"]], 95),
         },
+        # 含命中缓存的题（缓存里保存的是首次调用的耗时）：重跑或只重新评审时也能得到延迟，用于与其他实验比较
+        "gen_latency_all_ms": {
+            "p50": percentile([r["gen"]["latency_ms"] for r in records], 50),
+            "p95": percentile([r["gen"]["latency_ms"] for r in records], 95),
+        },
         "cost_usd": round(sum(r["gen"]["cost_usd"] + r["judge"]["cost_usd"] for r in records), 4),
+        **({"agent": summarize_agent(records)} if records and "agent" in records[0] else {}),
     }
 
 
-def run(settings: Settings, items: list[dict], retriever) -> list[dict]:
-    gcfg = settings.generation
-    gen_llm = LLMClient(settings.llm, gcfg.cache_dir)
-    judge_llm = LLMClient(settings.llm, gcfg.cache_dir, model=settings.judge.model)
-    gen_price = Price(settings.llm.price_input_cache_hit, settings.llm.price_input_cache_miss, settings.llm.price_output)
-    judge_price = Price(settings.judge.price_input_cache_hit, settings.judge.price_input_cache_miss, settings.judge.price_output)
-    page_texts = PdfPageTexts(read_manifest(settings.paths.manifest_path), settings.paths.raw_dir)
+def summarize_agent(records: list[dict]) -> dict:
+    """Agent 的工具使用情况：平均取证步数、用过工具的题目占比、各工具调用次数与失败次数。"""
+    calls = [t for r in records for t in r["agent"]["tool_log"]]
+    by_tool: dict[str, dict] = {}
+    for t in calls:
+        b = by_tool.setdefault(t["tool"], {"n": 0, "failed": 0})
+        b["n"] += 1
+        b["failed"] += not t["ok"]
+    return {
+        "mean_steps": _mean([r["agent"]["steps"] for r in records]),
+        "used_tools": _mean([float(bool(r["agent"]["tools"])) for r in records]),
+        "hit_max_steps": sum(r["agent"]["steps"] >= r["agent"]["max_steps"] for r in records),
+        "mean_llm_calls": _mean([r["gen"]["n_llm_calls"] for r in records]),
+        "tools": dict(sorted(by_tool.items())),
+    }
 
-    # 1. 检索（顺序）
+
+def locked(fn):
+    """给函数加一把锁：嵌入模型和页面文本缓存都不是线程安全的，Agent 并发运行时要串行访问。"""
+    lock = threading.Lock()
+
+    def wrapper(*args, **kwargs):
+        with lock:
+            return fn(*args, **kwargs)
+
+    return wrapper
+
+
+def answer_rag(settings: Settings, items: list[dict], retriever, gen_llm: LLMClient, gen_price: Price) -> dict[str, dict]:
+    """阶段 6 的作答方式：检索前 context_k 个 chunk -> 一次调用作答。返回 {题号: 作答输出}。"""
+    gcfg = settings.generation
     contexts = {}
-    for it in items:
+    for it in items:  # 检索（顺序）
         with timed("retrieve", logger, qid=it["id"]):
             contexts[it["id"]] = retriever.search(it["question"], gcfg.context_k)
 
-    # 2. 作答（并发）；每道题在自己的 trace 里执行，日志可按 trace_id 串起来
+    # 作答（并发）；每道题在自己的 trace 里执行，日志可按 trace_id 串起来
     def gen_one(it: dict):
         with trace_context(), timed("generate", logger, qid=it["id"]):
             return generate_answer(it["question"], contexts[it["id"]], gen_llm, gcfg.max_tokens)
 
     with ThreadPoolExecutor(gcfg.concurrency) as pool:
         answers = dict(zip([it["id"] for it in items], pool.map(gen_one, items)))
+    out = {}
+    for it in items:
+        ans, res = answers[it["id"]]
+        chunks = contexts[it["id"]]
+        out[it["id"]] = {
+            "answer": ans, "evidence": chunks,
+            "context": [{"rank": i, "chunk_id": c.chunk_id, "doc_id": c.doc_id, "page_start": c.page_start,
+                         "page_end": c.page_end} for i, c in enumerate(chunks, start=1)],
+            "gen": {"latency_ms": res.latency_ms, "from_cache": res.from_cache, "usage": asdict(res.usage),
+                    "cost_usd": 0.0 if res.from_cache else round(gen_price.cost(res.usage), 6)},
+        }  # fmt: skip
+    return out
+
+
+def answer_agent(settings: Settings, items: list[dict], retriever, gen_price: Price) -> dict[str, dict]:
+    """阶段 7 的作答方式：LangGraph Agent（agent/graph.py），每题独立运行、不带对话历史。
+
+    gen.latency_ms 口径：本题所有大模型调用耗时之和（命中缓存时用首次调用记录的耗时），
+    不含检索和等锁时间，这样与 G002 的"单次作答调用耗时"可比，也不受并发数影响（D-026）。
+    """
+    from agent.fin_db import PgFinStore
+    from agent.graph import build_deps, build_graph, run_turn
+
+    store = PgFinStore(settings.store.postgres_dsn.get_secret_value(), max_size=settings.generation.concurrency)
+    audit = store.log_tool_call if settings.agent.log_tool_calls else None
+    deps = build_deps(settings, locked(retriever.search), store, audit=audit)
+    deps.page_texts = locked(deps.page_texts)
+    graph = build_graph(deps)  # 单轮评测不需要 checkpointer
+
+    def run_one(it: dict):
+        with trace_context(), timed("agent", logger, qid=it["id"]) as t:
+            st = run_turn(graph, it["question"], settings.agent.max_steps)
+        return st, t["elapsed_ms"]  # elapsed_ms 在退出 with 块时才写入
+
+    try:
+        with ThreadPoolExecutor(settings.generation.concurrency) as pool:
+            states = dict(zip([it["id"] for it in items], pool.map(run_one, items)))
+    finally:
+        store.close()
+
+    return {it["id"]: agent_output(*states[it["id"]], settings, gen_price) for it in items}
+
+
+def agent_output(st: dict, wall_ms: float | None, settings: Settings, gen_price: Price) -> dict:
+    """把 Agent 一轮的最终状态整理成评测用的作答输出（多轮对话评测 eval/run_dialog_eval.py 也用它）。"""
+    from agent.graph import answer_from_state
+    from agent.state import Evidence
+
+    evidence = [Evidence.from_dict(d) for d in st["evidence"]]
+    calls = st["llm_calls"]
+    usage = {k: sum(c["usage"][k] for c in calls) for k in ("prompt_tokens", "completion_tokens", "cache_hit_tokens")}
+    cost = sum(gen_price.cost(Usage(**c["usage"])) for c in calls if not c["from_cache"])
+    return {
+        "answer": answer_from_state(st), "evidence": evidence,
+        "context": [{"rank": e.id, "source": e.source, "chunk_id": e.chunk_id, "doc_id": e.doc_id,
+                     "page_start": e.page_start, "page_end": e.page_end} for e in evidence],
+        "gen": {"latency_ms": round(sum(c["latency_ms"] for c in calls), 1),
+                "from_cache": all(c["from_cache"] for c in calls), "usage": usage,
+                "cost_usd": round(cost, 6), "wall_ms": wall_ms, "n_llm_calls": len(calls)},
+        "agent": {"steps": st["steps"], "max_steps": settings.agent.max_steps, "tools": [t["tool"] for t in st["tool_log"]],
+                  "tool_log": st["tool_log"], "calc_log": st["calc_log"], "standalone": st["standalone"]},
+    }  # fmt: skip
+
+
+def run(settings: Settings, items: list[dict], retriever, answerer: str = "rag") -> list[dict]:
+    gen_llm = LLMClient(settings.llm, settings.generation.cache_dir)
+    gen_price = Price(settings.llm.price_input_cache_hit, settings.llm.price_input_cache_miss, settings.llm.price_output)
+    page_texts = PdfPageTexts(read_manifest(settings.paths.manifest_path), settings.paths.raw_dir)
+
+    # 1~2. 检索与作答
+    if answerer == "agent":
+        outputs = answer_agent(settings, items, retriever, gen_price)
+    else:
+        outputs = answer_rag(settings, items, retriever, gen_llm, gen_price)
+
+    return score_and_judge(settings, items, outputs, page_texts)
+
+
+def score_and_judge(settings: Settings, items: list[dict], outputs: dict[str, dict], page_texts) -> list[dict]:
+    """3~5：引用校验、规则判分、LLM 评审。items 与 outputs 按题号对应（多轮对话评测也用它）。"""
+    judge_llm = LLMClient(settings.llm, settings.generation.cache_dir, model=settings.judge.model)
+    judge_price = Price(settings.judge.price_input_cache_hit, settings.judge.price_input_cache_miss, settings.judge.price_output)
 
     # 3~4. 引用校验与规则判分（主线程，页面文本缓存非线程安全）
     records = []
     for it in items:
-        ans, res = answers[it["id"]]
-        chunks = contexts[it["id"]]
-        checks = check_citations(ans.citations, chunks, page_texts)
+        o = outputs[it["id"]]
+        ans = o["answer"]
+        checks = check_citations(ans.citations, o["evidence"], page_texts)
         rec = {
             "id": it["id"], "type": it["type"], "variant": it.get("variant", "original"),
-            "question": it["question"], "reference": it["answer"],
-            "context": [{"rank": i, "chunk_id": c.chunk_id, "doc_id": c.doc_id, "page_start": c.page_start,
-                         "page_end": c.page_end} for i, c in enumerate(chunks, start=1)],
+            "question": it["question"], "reference": it["answer"], "context": o["context"],
             "answer": ans.answer, "refused": ans.refused, "format_ok": ans.format_ok, "error": ans.error,
-            "n_bad_citations": ans.n_bad_citations, "citations": [asdict(c) for c in checks],
-            "gen": {"latency_ms": res.latency_ms, "from_cache": res.from_cache, "usage": asdict(res.usage),
-                    "cost_usd": 0.0 if res.from_cache else round(gen_price.cost(res.usage), 6)},
+            "n_bad_citations": ans.n_bad_citations, "citations": [asdict(c) for c in checks], "gen": o["gen"],
         }  # fmt: skip
+        if "agent" in o:
+            rec["agent"] = o["agent"]
         records.append(score_record(it, rec))
 
     # 5. 评审（并发）：只把系统实际引用的证据（有效编号）交给评审
@@ -182,13 +291,13 @@ def run(settings: Settings, items: list[dict], retriever) -> list[dict]:
         ruled = rule_verdict(rec["metrics"]["oos"], rec["refused"], answered)
         if ruled is not None:  # 拒答、未作答：按规则判定，不调用大模型
             return ruled, None
-        chunks = contexts[rec["id"]]
+        evidence = outputs[rec["id"]]["evidence"]
         refs = sorted({c["ref"] for c in rec["citations"] if c["valid_ref"]})
         with trace_context(), timed("judge", logger, qid=rec["id"]):
             return judge_answer(judge_llm, settings.judge.max_tokens, rec["question"], rec["reference"],
-                                rec["answer"], rec["refused"], [chunks[r - 1].text for r in refs])  # fmt: skip
+                                rec["answer"], rec["refused"], [evidence[r - 1].text for r in refs])  # fmt: skip
 
-    with ThreadPoolExecutor(gcfg.concurrency) as pool:
+    with ThreadPoolExecutor(settings.generation.concurrency) as pool:
         verdicts = list(pool.map(judge_one, records))
     for rec, (v, res) in zip(records, verdicts):
         cost = 0.0 if res is None or res.from_cache else round(judge_price.cost(res.usage), 6)
@@ -210,7 +319,12 @@ def print_summary(summary: dict) -> None:
     o = summary["overall"]
     print(f"\n格式错误率 {fmt(o['format_error'])}  评审失败 {o['judge_fail']} 题  "
           f"评审与规则一致率 {fmt(o['judge_rule_agree'])}（{o['n_judge_rule']} 题）  "
-          f"生成延迟 p50={summary['gen_latency_ms']['p50'] or '-（全部命中缓存）'}ms  本次费用 ${summary['cost_usd']}")  # fmt: skip
+          f"生成延迟 p50={summary['gen_latency_ms']['p50'] or '-（全部命中缓存）'}ms "
+          f"（含缓存口径 p50={summary['gen_latency_all_ms']['p50']}ms）  本次费用 ${summary['cost_usd']}")  # fmt: skip
+    if "agent" in summary:
+        a = summary["agent"]
+        print(f"Agent：平均取证步数 {fmt(a['mean_steps'])}  用过工具的题 {fmt(a['used_tools'])}  "
+              f"达到步数上限 {a['hit_max_steps']} 题  平均模型调用 {fmt(a['mean_llm_calls'])} 次  工具 {a['tools']}")
 
 
 def append_gen_log(path: Path, row: dict) -> None:
@@ -230,6 +344,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--note", default="")
     p.add_argument("--no-log", action="store_true")
     p.add_argument("--limit", type=int, default=0, help="只评测前 N 道题（冒烟测试用，必须配合 --no-log）")
+    p.add_argument("--answerer", default="rag", choices=("rag", "agent"),
+                   help="rag：检索 + 一次作答（阶段 6）；agent：LangGraph Agent（阶段 7）")
     args = p.parse_args(argv)
     if args.limit and not args.no_log:
         p.error("--limit 只用于冒烟测试，必须同时加 --no-log")
@@ -251,7 +367,7 @@ def main(argv: list[str] | None = None) -> int:
     exp_id = "_nolog_gen" if args.no_log else next_exp_id(log_path, prefix="G")
     commit = git_commit()
     with trace_context(), timed("gen_eval_all", logger, exp_id=exp_id, n=len(items)):
-        records = run(settings, items, retriever)
+        records = run(settings, items, retriever, args.answerer)
     summary = summarize(records)
 
     version_label = version if args.subset == "all" else f"{version}:{args.subset}"
@@ -260,6 +376,7 @@ def main(argv: list[str] | None = None) -> int:
         "retrieval_config": retriever.config, "generation": settings.generation.model_dump(mode="json"),
         "llm_model": settings.llm.model, "thinking": settings.llm.thinking, "temperature": settings.llm.temperature,
         "judge_model": settings.judge.model, "judge_prompt_version": settings.judge.prompt_version,
+        "answerer": args.answerer, "agent": settings.agent.model_dump(mode="json") if args.answerer == "agent" else None,
         "goldset_version": version_label, "goldset_sha256": frozen.sha256, "summary": summary,
     }  # fmt: skip
     out = settings.paths.experiments_dir / "gen_runs" / f"{exp_id}.jsonl"
@@ -274,16 +391,24 @@ def main(argv: list[str] | None = None) -> int:
     print(f"明细 {shown}")
     if not args.no_log:
         o = summary["overall"]
+        # gen_log.csv 的列保持不变（与已有记录兼容）：Agent 的版本写进 prompt_version 列，作答方式和延迟写进备注
+        agent_note = ""
+        prompt_version = settings.generation.prompt_version
+        if args.answerer == "agent":
+            prompt_version = settings.agent.prompt_version
+            agent_note = f"answerer=agent(max_steps={settings.agent.max_steps}, search_k={settings.agent.search_k})"
+        lat = summary["gen_latency_all_ms"]["p50"]
+        note_parts = (args.note, agent_note, f"模型耗时p50={lat}ms", f"明细 experiments/gen_runs/{exp_id}.jsonl")
         append_gen_log(log_path, {
             "exp_id": exp_id, "date": meta["date"], "git_commit": commit, "改动说明": args.desc,
             "retrieval": retriever.config.get("retriever", ""), "context_k": settings.generation.context_k,
             "llm_model": settings.llm.model, "thinking": settings.llm.thinking,
-            "prompt_version": settings.generation.prompt_version, "judge_model": settings.judge.model,
+            "prompt_version": prompt_version, "judge_model": settings.judge.model,
             "goldset_version": version_label, "n_questions": o["n"], "judge_correct": fmt(o["judge_correct"]),
             "num_match": fmt(o["num_match"]), "faithfulness": fmt(o["faithfulness"]),
             "cite_verified": fmt(o["cite_verified"]), "cite_recall": fmt(o["cite_recall"]),
             "refusal_recall": fmt(o["refusal_recall"]), "false_refusal": fmt(o["false_refusal"]),
-            "cost_usd": summary["cost_usd"], "备注": "; ".join(x for x in (args.note, f"明细 experiments/gen_runs/{exp_id}.jsonl") if x),
+            "cost_usd": summary["cost_usd"], "备注": "; ".join(x for x in note_parts if x),
         })  # fmt: skip
         print(f"已写入 gen_log.csv：{exp_id}  git={commit}")
     return 0
