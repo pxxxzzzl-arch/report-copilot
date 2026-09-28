@@ -13,12 +13,19 @@ Streamlit 的运行方式：每次交互（提问、点按钮）都会把本脚�
 
 from __future__ import annotations
 
+import sys
 import time
+from pathlib import Path
 
 import streamlit as st
 
-from config import get_settings
-from ui.client import ApiClient, ApiError, describe_event
+# streamlit run 只把脚本所在目录（ui/）加入 sys.path；把项目根目录也加进去，才能 import config、ui.client
+_ROOT = Path(__file__).resolve().parents[1]
+if str(_ROOT) not in sys.path:
+    sys.path.insert(0, str(_ROOT))
+
+from config import get_settings  # noqa: E402  （必须在上面调整 sys.path 之后导入）
+from ui.client import ApiClient, ApiError, describe_event  # noqa: E402
 
 st.set_page_config(page_title="年报智能分析助手", page_icon="📊", layout="wide")
 
@@ -115,7 +122,7 @@ def render_answer(msg: dict, idx: int) -> None:
                 continue
             page = c["page"] or c["page_start"]
             title = f"{ev['company']} {ev['year']} 年报 · 第 {page} 页"
-            left, right = st.columns([5, 1])
+            left, right = st.columns([3, 1], vertical_alignment="center")
             left.markdown(f"**[{c['ref']}]** {title}  \n「{short}」")
             right.button("查看原文", key=f"cite-{idx}-{j}", on_click=open_viewer,
                          args=(c["doc_id"], page, c["quote"], f"[{c['ref']}] {title}"))  # fmt: skip
@@ -201,19 +208,22 @@ def main() -> None:
     sidebar()
     chat_col, view_col = st.columns([3, 2], gap="large")
     with chat_col:
-        if not st.session_state.messages:
-            st.markdown("#### 可以这样问")
-            st.caption("贵州茅台2025年营业收入是多少？ · 宁德时代2025年营业收入同比增长了多少？（再追问：那比亚迪呢？）"
-                       " · 2024年五粮液和泸州老窖谁的经营活动现金流更多？")  # fmt: skip
-        for i, m in enumerate(st.session_state.messages):
-            with st.chat_message(m["role"]):
-                if m["role"] == "user":
-                    st.markdown(m["content"])
-                else:
-                    render_answer(m, i)
+        # 先放一个容器承载对话，再放输入框：Streamlit 按调用顺序排版，流式回答写进这个容器，才会出现在输入框上方
+        history = st.container()
         question = st.chat_input("输入问题，例如：宁德时代2025年研发投入是多少？", max_chars=500)
-        if question:
-            ask(question)
+        with history:
+            if not st.session_state.messages and not question:
+                st.markdown("#### 可以这样问")
+                st.caption("贵州茅台2025年营业收入是多少？ · 宁德时代2025年营业收入同比增长了多少？（再追问：那比亚迪呢？）"
+                           " · 2024年五粮液和泸州老窖谁的经营活动现金流更多？")  # fmt: skip
+            for i, m in enumerate(st.session_state.messages):
+                with st.chat_message(m["role"]):
+                    if m["role"] == "user":
+                        st.markdown(m["content"])
+                    else:
+                        render_answer(m, i)
+            if question:
+                ask(question)
     with view_col:
         viewer()
 

@@ -93,8 +93,10 @@ report-copilot/
     errors.py             # 统一错误格式与异常归类
     middleware.py         # 纯 ASGI 的 trace 中间件（X-Request-ID / X-Trace-Id、访问日志）
     schemas.py            # 请求与响应模型
+    pages.py              # 页面截图 + 引用高亮定位（整段搜索 → 逐字对齐 → 数字兜底）
   ui/
-    app.py
+    app.py                # Streamlit：对话 + 流式进度 + 原文查看器
+    client.py             # API 客户端（SSE 解析）与进度文案
   experiments/
     log.csv               # 每次实验一行
     runs/                 # 每次实验的逐题明细 {exp_id}.jsonl（召回结果、命中情况、各项指标）
@@ -189,7 +191,7 @@ gold 带 `alt` 时，主位置或任一 alt 位置满足 1、2 条（第 3 条�
 - [x] 留出集 v3（80 题，不参与调参）：阶段 6 后运行一次，检索 Recall@5 0.8554、生成评审正确率 0.8625（E021 / G005，D-025）；阶段 7 按预先登记第二次运行，Agent 0.9375（G008，D-028）
 - [x] 阶段 7：LangGraph Agent（G007：v2 评审正确率 0.9667，相对 G002 确定提升；v3 上 G008 0.9375；多轮对话带记忆 1.0 vs 不带 0.13；见 D-028）
 - [x] 阶段 8：FastAPI 服务（SSE 按节点推送进度、PostgresSaver 多轮、Redis 限流、可选 API Key；与 G007 一致性回归 10/10，见 D-029）
-- [ ] 阶段 9：前端
+- [x] 阶段 9：前端（Streamlit 两栏；点击引用显示原页并高亮，413 条引用中 408 条可定位；见 D-030）
 - [ ] 阶段 10：部署上线
 - [ ] 阶段 11：vLLM 部署与压测
 - [ ] 阶段 12：面试材料

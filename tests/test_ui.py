@@ -70,6 +70,8 @@ def test_describe_event() -> None:
     assert describe_event("rewrite", {"standalone": "q"}, "q") is None  # 没有改写时不显示
     assert describe_event("rewrite", {"standalone": "五粮液2024年营业收入"}, "那五粮液呢？") == "理解追问：五粮液2024年营业收入"
     assert describe_event("decide", {"step": 1, "tool_calls": []}) == "证据已足够，正在作答…"
+    two = {"step": 1, "tool_calls": ["get_financial_metric", "get_financial_metric", "calculator"]}
+    assert describe_event("decide", two) == "第 1 步：需要查询财务指标（2 次）、计算"
     tool = {"tool": "get_financial_metric", "args": {"company": "茅台", "year": 2024, "metric": "revenue"},
             "ok": True, "n_results": 2}  # fmt: skip
     assert describe_event("tool", tool) == "· 查询财务指标：茅台 2024 年 营业收入（得到 2 条证据）"

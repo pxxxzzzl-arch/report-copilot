@@ -132,7 +132,11 @@ def describe_event(event: str, data: dict, question: str = "") -> str | None:
     if event == "decide":
         if not data["tool_calls"]:
             return "证据已足够，正在作答…"
-        names = "、".join(TOOL_NAMES.get(t, t) for t in data["tool_calls"])
+        # 同一步多次调用同一个工具时合并显示："查询财务指标（2 次）"
+        counts: dict[str, int] = {}
+        for t in data["tool_calls"]:
+            counts[TOOL_NAMES.get(t, t)] = counts.get(TOOL_NAMES.get(t, t), 0) + 1
+        names = "、".join(n if c == 1 else f"{n}（{c} 次）" for n, c in counts.items())
         return f"第 {data['step']} 步：需要{names}"
     if event == "tool":
         args = data.get("args") or {}

@@ -88,6 +88,16 @@ curl http://127.0.0.1:8000/v1/threads/demo-1
 鉴权（`API__KEYS`，请求头 `X-API-Key`）、限流（Redis，默认每客户端每分钟 30 次）、并发上限（默认 8，满了返回 503）都在 `.env` 中配置。
 错误统一返回 `{"error": {code, message, trace_id}}`，响应头带 `X-Trace-Id`，可以用它在服务端日志中查到这次请求的全部记录。设计见 D-029。
 
+## 前端（阶段 9）
+
+```bash
+# 先按上一节启动 API 服务，再启动前端，浏览器打开 http://localhost:8501
+uv run streamlit run ui/app.py
+```
+
+左栏对话（实时显示检索、查指标、计算等进度），右栏原文查看器：点击答案下方引用的"查看原文"，显示年报原页，并用黄色框标出摘录的位置
+（413 条引用中 408 条能定位到高亮框，D-030）。API 地址和 API Key 在 `.env` 的 `UI__API_BASE`、`UI__API_KEY` 中配置。
+
 ## 评测
 
 ```bash
