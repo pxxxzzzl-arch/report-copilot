@@ -295,6 +295,11 @@ class EvalSettings(BaseModel):
             path=Path("eval/goldset_v2.jsonl"),
             sha256="c9cb0ba8be789ed36ee9ba82bef6680db7cfbfd8603fa99334e60e1e6ce2f816",
         ),
+        # v3 = 留出集（80 题，按种子抽样页出题，不参与任何调参；冻结后按 D-024 登记的 4 组配置各运行一次）
+        "v3": FrozenGoldset(
+            path=Path("eval/goldset_v3.jsonl"),
+            sha256="068ff19b14bba548bc7a16a3b96ad4fab82793020fe57a5c088c01e2cb5544c8",
+        ),
     }
     goldset_version: str = "v1"  # run_eval 未指定 --goldset 时使用的版本
     # 计算指标的 K 值；检索深度取其中最大值。log.csv 固定记录 hit@5 / recall@5 / mrr@10，所以必须包含 5 和 10

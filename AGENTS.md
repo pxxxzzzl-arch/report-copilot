@@ -70,7 +70,7 @@ report-copilot/
     llm.py                # OpenAI 兼容接口调用层（JSON 输出、思考模式开关、本地缓存、计费）
     prompts.py  answer.py  citation.py
   eval/
-    goldset.jsonl         # 评测集（人工审核过）
+    goldset.jsonl         # 评测集 v1（开发集）；goldset_v2.jsonl（+口语改写）；goldset_v3.jsonl（留出集，只用于报告最终结果）
     goldset_schema.md
     validate_goldset.py
     metrics.py            # Hit@K / Recall@K / Precision@K / MRR / NDCG
