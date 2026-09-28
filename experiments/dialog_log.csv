@@ -1,0 +1,3 @@
+exp_id,date,git_commit,改动说明,mode,checkpointer,prompt_version,dialog_set,n_dialogs,judge_correct,num_match,cite_recall,refused_ok,cost_usd,备注
+D001,2026-09-28,bede640,D001 多轮对话·带记忆：G007 的 Agent + PostgresSaver，同一对话编号依次问完各轮，只评最后一轮,memory,postgres,agent-v1,dialogs_v1,15,1.0000,1.0000,0.9231,1.0000,0.0,明细 experiments/gen_runs/D001.jsonl
+D002,2026-09-28,bede640,D002 多轮对话·对照：只问最后一轮、不带历史，其余同 D001,no_memory,postgres,agent-v1,dialogs_v1,15,0.1333,0.0000,0.0000,0.2000,0.0385,明细 experiments/gen_runs/D002.jsonl

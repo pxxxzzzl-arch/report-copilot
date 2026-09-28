@@ -79,9 +79,14 @@ report-copilot/
     run_gen_eval.py       # 生成评测
     gen_metrics.py        # 生成侧规则判分（数值单位换算、引用召回）
     judge.py              # LLM-as-a-Judge（judge-v2：拒答类由规则判定）
-    compare_runs.py       # 两次实验的配对 bootstrap + 符号检验（检索 E### / 生成 G###）
+    compare_runs.py       # 两次实验的配对 bootstrap + 符号检验（检索 E### / 生成 G### / 多轮对话 D###）
+    dialogs_v1.jsonl      # 多轮对话评测集（15 组，最后一轮的参考答案取自 v1 对应题目）
+    run_dialog_eval.py    # 多轮对话评测（带记忆 / 不带记忆对照）
   agent/
-    state.py  graph.py  tools.py  fin_db.py
+    state.py              # 图状态（只存 JSON 基本类型，便于 checkpoint 序列化）
+    graph.py              # LangGraph：rewrite → retrieve → agent⇄tools → answer → verify；命令行试用入口
+    tools.py              # get_financial_metric / search_reports / calculator（ast 白名单 + Decimal）
+    fin_db.py             # Postgres：fin_metrics 财务指标表、agent_tool_calls 审计表；build 子命令建表入库
   api/
     main.py  deps.py  errors.py  middleware.py
   ui/
@@ -90,14 +95,15 @@ report-copilot/
     log.csv               # 每次实验一行
     runs/                 # 每次实验的逐题明细 {exp_id}.jsonl（召回结果、命中情况、各项指标）
     gen_log.csv           # 生成实验（G###）每次一行
-    gen_runs/             # 生成实验的逐题明细
+    gen_runs/             # 生成实验（G###）与多轮对话实验（D###）的逐题明细
+    dialog_log.csv        # 多轮对话实验（D###）每次一行
     badcases.md           # Bad Case 记录
   docs/
     decisions.md          # 每个技术选择的理由
     architecture.md
   tests/
   deploy/
-    docker-compose.dev.yml  # 开发用基础设施（阶段 4 起：Qdrant）
+    docker-compose.dev.yml  # 开发用基础设施（阶段 4：Qdrant；阶段 7：Postgres，端口 5432 仅本机）
     docker-compose.yml  nginx.conf
   bench/
     load_test.py          # 推理压测
@@ -176,8 +182,8 @@ gold 带 `alt` 时，主位置或任一 alt 位置满足 1、2 条（第 3 条�
 - [x] 阶段 4：v0 朴素基线（E001：hit@5=0.6538 recall@5=0.5385 mrr@10=0.4838）
 - [x] 阶段 5：检索消融实验（最终 E013：v2 Recall@5=0.7869；查询理解贡献最大，见 docs/decisions.md D-019）
 - [x] 阶段 6：生成侧评测（最终 G002：评审正确率 0.9042、引用可核验率 1.0、拒答召回率 1.0；见 docs/decisions.md D-023）
-- [x] 留出集 v3（80 题，冻结后只运行一次）：检索 Recall@5 0.8554、生成评审正确率 0.8625（E021 / G005，见 D-025）
-- [ ] 阶段 7：LangGraph Agent
+- [x] 留出集 v3（80 题，不参与调参）：阶段 6 后运行一次，检索 Recall@5 0.8554、生成评审正确率 0.8625（E021 / G005，D-025）；阶段 7 按预先登记第二次运行，Agent 0.9375（G008，D-028）
+- [x] 阶段 7：LangGraph Agent（G007：v2 评审正确率 0.9667，相对 G002 确定提升；v3 上 G008 0.9375；多轮对话带记忆 1.0 vs 不带 0.13；见 D-028）
 - [ ] 阶段 8：FastAPI 服务
 - [ ] 阶段 9：前端
 - [ ] 阶段 10：部署上线
