@@ -59,6 +59,14 @@ class ChatResponse(BaseModel):
     latency_ms: float
 
 
+class DocumentOut(BaseModel):
+    doc_id: str
+    company: str
+    stock_code: str
+    year: int
+    n_pages: int
+
+
 class Turn(BaseModel):
     question: str
     answer: str

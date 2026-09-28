@@ -120,6 +120,7 @@ class AppState:
     # 就绪检查：组件名 -> 检查函数（抛异常表示不可用）
     checks: dict[str, Callable[[], None]] = field(default_factory=dict)
     closers: list[Callable[[], None]] = field(default_factory=list)  # 关闭服务时依次调用
+    manifest: dict = field(default_factory=dict)  # doc_id -> ManifestRow；页面截图只允许访问其中的文档
 
     def close(self) -> None:
         for fn in reversed(self.closers):
@@ -222,4 +223,7 @@ def build_app_state(settings: Settings) -> AppState:
         "redis": lambda: r.ping(),
         "qdrant": lambda: qdrant.get_collection(settings.collection_name()),
     }
-    return AppState(settings, graph, limiter, ConcurrencyGate(n), checks, closers)
+    from ingest.download import read_manifest
+
+    manifest = read_manifest(settings.paths.manifest_path)
+    return AppState(settings, graph, limiter, ConcurrencyGate(n), checks, closers, manifest)

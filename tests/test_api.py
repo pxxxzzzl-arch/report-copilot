@@ -228,3 +228,58 @@ def test_redis_down_fails_open() -> None:
             raise ConnectionError("down")
 
     assert RedisRateLimiter(Down(), limit=1, window_s=60).hit("c") == (True, 0)
+
+
+# ---------------- 语料与页面截图（阶段 9） ----------------
+
+
+def _client_with_pdf(tmp_path, **api):
+    """make_client + 一份测试 PDF 登记进 manifest（页面截图只允许访问 manifest 中的文档）。"""
+    import pymupdf
+
+    from ingest.download import ManifestRow
+
+    doc = pymupdf.open()
+    for _ in range(2):
+        doc.new_page().insert_text((72, 72), "营业收入 1,000.00 元", fontname="china-s")
+    doc.save(tmp_path / "t.pdf")
+    client, state = make_client(**api)
+    state.settings = state.settings.model_copy(update={"paths": state.settings.paths.model_copy(update={"raw_dir": tmp_path})})
+    state.manifest = {"000001_2024": ManifestRow("000001_2024", "测试", "000001", 2024, "t.pdf", 2, "szse", "2025-01-01", "u", "h")}
+    return client, state
+
+
+def test_documents_and_page_image(tmp_path) -> None:
+    client, _ = _client_with_pdf(tmp_path)
+    with client:
+        docs = client.get("/v1/documents").json()
+        assert docs == [{"doc_id": "000001_2024", "company": "测试", "stock_code": "000001", "year": 2024, "n_pages": 2}]
+        r = client.get("/v1/documents/000001_2024/pages/2/image", params={"q": "1,000.00"})
+        assert r.status_code == 200 and r.headers["content-type"] == "image/png" and r.content[:4] == b"\x89PNG"
+        assert r.headers["x-highlight-method"] == "exact" and r.headers["x-highlight-count"] == "1"
+        assert client.get("/v1/documents/000001_2024/pages/1/image").headers["x-highlight-method"] == "none"
+
+
+@pytest.mark.parametrize(
+    ("path", "params", "status"),
+    [
+        ("/v1/documents/..%2F..%2Fetc%2Fpasswd/pages/1/image", {}, 404),  # 路径穿越：doc_id 不在 manifest 中
+        ("/v1/documents/999999_2024/pages/1/image", {}, 404),
+        ("/v1/documents/000001_2024/pages/3/image", {}, 422),  # 超出页数
+        ("/v1/documents/000001_2024/pages/0/image", {}, 422),
+        ("/v1/documents/000001_2024/pages/1/image", {"q": "x" * 201}, 422),
+        ("/v1/documents/000001_2024/pages/1/image", {"scale": 10}, 422),
+    ],
+)
+def test_page_image_rejects_bad_input(tmp_path, path, params, status) -> None:
+    client, _ = _client_with_pdf(tmp_path)
+    with client:
+        r = client.get(path, params=params)
+        assert r.status_code == status and "error" in r.json()
+
+
+def test_page_image_requires_api_key(tmp_path) -> None:
+    client, _ = _client_with_pdf(tmp_path, keys=[SecretStr("k")])
+    with client:
+        assert client.get("/v1/documents/000001_2024/pages/1/image").status_code == 401
+        assert client.get("/v1/documents").status_code == 401

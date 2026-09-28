@@ -20,6 +20,7 @@ dependencies = [
     "pymupdf>=1.28.2",
     "qdrant-client>=1.19,<1.20",
     "redis>=8.1",
+    "streamlit>=1.64,<1.65",
     "uvicorn[standard]>=0.54",
 ]
 

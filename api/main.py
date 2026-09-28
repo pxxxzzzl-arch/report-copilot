@@ -11,6 +11,8 @@
     POST /v1/chat          一次性返回答案
     POST /v1/chat/stream   SSE：start → rewrite → retrieve → decide → (tool ... → decide)* → answer → done；出错时发 error
     GET  /v1/threads/{id}  对话历史
+    GET  /v1/documents     语料清单
+    GET  /v1/documents/{doc_id}/pages/{page}/image?q=摘录   页面截图（PNG），摘录位置画高亮框（阶段 9）
     GET  /healthz          存活检查（进程在就返回 200）
     GET  /readyz           就绪检查（Postgres、Redis、Qdrant 都可用才返回 200）
 
@@ -27,14 +29,14 @@ import uuid
 from collections.abc import Callable, Iterator
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI
-from fastapi.responses import JSONResponse
+from fastapi import Depends, FastAPI, Query
+from fastapi.responses import JSONResponse, Response
 from fastapi.sse import EventSourceResponse, ServerSentEvent
 
 from api.deps import AppState, Slot, acquire_slot, build_app_state, get_state, rate_limit, require_api_key
 from api.errors import APIError, classify_exception, error_body, install_error_handlers
 from api.middleware import TraceMiddleware
-from api.schemas import THREAD_ID_PATTERN, ChatRequest, ChatResponse, ErrorResponse, ThreadOut
+from api.schemas import THREAD_ID_PATTERN, ChatRequest, ChatResponse, DocumentOut, ErrorResponse, ThreadOut
 from common.log import get_trace_id, setup_logging
 from config import Settings, get_settings
 
@@ -156,6 +158,38 @@ def create_app(settings: Settings | None = None, state_factory: Callable[[Settin
         if not values:
             raise APIError(404, "not_found", "对话不存在")
         return ThreadOut(thread_id=thread_id, history=values.get("history", []))
+
+    @app.get("/v1/documents", response_model=list[DocumentOut], dependencies=[Depends(require_api_key)])
+    def list_documents(core: AppState = Depends(get_state)) -> list[DocumentOut]:
+        return [DocumentOut(doc_id=r.doc_id, company=r.company, stock_code=r.stock_code, year=r.year, n_pages=r.n_pages)
+                for r in sorted(core.manifest.values(), key=lambda r: r.doc_id)]  # fmt: skip
+
+    @app.get("/v1/documents/{doc_id}/pages/{page}/image", dependencies=[Depends(require_api_key)],
+             responses={200: {"content": {"image/png": {}}}, 404: {"model": ErrorResponse}, 422: {"model": ErrorResponse}})  # fmt: skip
+    def page_image(
+        doc_id: str, page: int, q: str = Query(default="", description="要高亮的摘录"),
+        scale: float | None = Query(default=None), core: AppState = Depends(get_state),
+    ) -> Response:
+        """渲染一页并高亮摘录。响应头 X-Highlight-Method（exact / chars / number / none）、X-Highlight-Count 告诉前端是否定位成功。
+
+        安全：doc_id 只能是 manifest 中登记的文档，文件路径由服务端根据 manifest 拼出，用户输入不参与路径拼接（防路径穿越）。
+        """
+        from api.pages import render_page_png
+
+        row = core.manifest.get(doc_id)
+        if row is None:
+            raise APIError(404, "not_found", "文档不存在")
+        if not 1 <= page <= row.n_pages:
+            raise APIError(422, "invalid_request", f"页码超出范围（1~{row.n_pages}）")
+        api_cfg = core.settings.api
+        if len(q) > api_cfg.max_quote_chars:
+            raise APIError(422, "invalid_request", f"摘录过长（最多 {api_cfg.max_quote_chars} 个字符）")
+        scale = api_cfg.page_scale if scale is None else scale
+        if not 0.5 <= scale <= api_cfg.page_scale_max:
+            raise APIError(422, "invalid_request", f"scale 超出范围（0.5~{api_cfg.page_scale_max}）")
+        png, method, n = render_page_png(core.settings.paths.raw_dir / row.file_name, page, q, round(scale, 2))
+        return Response(png, media_type="image/png", headers={
+            "X-Highlight-Method": method, "X-Highlight-Count": str(n), "Cache-Control": "private, max-age=3600"})  # fmt: skip
 
     return app
 

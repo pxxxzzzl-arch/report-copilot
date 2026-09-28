@@ -355,6 +355,18 @@ class ApiSettings(BaseModel):
     max_question_chars: int = Field(default=500, gt=0)
     # 大模型本地文件缓存：评测时开启保证可复现；服务默认关闭，重复提问也真实调用模型
     llm_cache: bool = False
+    # 页面截图（阶段 9）：默认缩放倍数、允许的范围、高亮摘录的最大长度
+    page_scale: float = Field(default=1.5, gt=0)
+    page_scale_max: float = Field(default=3.0, gt=0)
+    max_quote_chars: int = Field(default=200, gt=0)
+
+
+class UiSettings(BaseModel):
+    """Streamlit 前端（阶段 9）。前端只和 API 通信；API Key 由 Streamlit 服务端读取，不会发到浏览器。"""
+
+    api_base: str = "http://127.0.0.1:8000"
+    api_key: SecretStr = SecretStr("")  # 与 API__KEYS 中的某一个相同；API 未开启鉴权时留空
+    timeout_s: float = Field(default=120.0, gt=0)  # 一次问答（含流式）的最长等待时间
 
 
 class LogSettings(BaseModel):
@@ -393,6 +405,7 @@ class Settings(BaseSettings):
     judge: JudgeSettings = JudgeSettings()
     agent: AgentSettings = AgentSettings()
     api: ApiSettings = ApiSettings()
+    ui: UiSettings = UiSettings()
     cninfo: CninfoSettings = CninfoSettings()
     precheck: PrecheckSettings = PrecheckSettings()
     eval: EvalSettings = EvalSettings()
