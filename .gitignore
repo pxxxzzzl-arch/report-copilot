@@ -13,6 +13,7 @@ data/cache/
 
 # 调试运行（--no-log）的评测明细，不进实验记录
 experiments/runs/_nolog_*
+experiments/bench_runs/_nolog_*
 experiments/gen_runs/_nolog_*
 
 # Python

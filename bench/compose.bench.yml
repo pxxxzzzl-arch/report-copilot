@@ -1,0 +1,11 @@
+# 压测用的叠加配置（阶段 11，D-032）：只把单客户端限流调高，其他与 deploy/docker-compose.yml 完全相同。
+# 压测从同一个 IP 发出所有请求，默认每分钟 30 次的限流会把它们挡住；这里测的是系统容量，不是限流器。
+#
+#   docker compose --env-file .env -f deploy/docker-compose.dev.yml -f deploy/docker-compose.yml \
+#       -f bench/compose.bench.yml up -d --wait
+# 压测结束后用 deploy/scripts/up.sh 恢复正常配置。
+
+services:
+  api:
+    environment:
+      API__RATE_LIMIT: "100000"

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from collections.abc import Callable, Iterator
 from dataclasses import asdict, dataclass
 
@@ -224,13 +225,25 @@ def stream_turn(graph, question: str, max_steps: int, thread_id: str | None = No
     yield {"event": "final", "state": final}
 
 
-def locked(fn: Callable) -> Callable:
-    """给函数加一把锁：嵌入模型和页面文本缓存都不是线程安全的，多个 Agent 并发运行时要串行访问。"""
+def locked(fn: Callable, name: str) -> Callable:
+    """给函数加一把锁：嵌入模型和页面文本缓存都不是线程安全的，多个 Agent 并发运行时要串行访问。
+
+    每次调用输出一条 stage="lock" 的日志：wait_ms 是排队等锁的时间，hold_ms 是拿到锁后实际执行的时间。
+    并发时检索变慢，靠这两个数区分是在排队还是在计算（阶段 11 压测，D-032）。
+    """
     lock = threading.Lock()
 
     def wrapper(*args, **kwargs):
+        t0 = time.perf_counter()
         with lock:
-            return fn(*args, **kwargs)
+            t1 = time.perf_counter()
+            try:
+                return fn(*args, **kwargs)
+            finally:
+                t2 = time.perf_counter()
+                logger.info("lock released", extra={"stage": "lock", "lock": name,
+                                                    "wait_ms": round((t1 - t0) * 1000, 2),
+                                                    "hold_ms": round((t2 - t1) * 1000, 2)})  # fmt: skip
 
     return wrapper
 
@@ -254,13 +267,13 @@ def build_deps(
     manifest = read_manifest(settings.paths.manifest_path)
     parser = QueryParser(manifest, settings.retrieval.company_aliases)
     names = {r.stock_code: r.company for r in manifest.values()}
-    search = locked(search)  # 初始检索与 search_reports 共用同一把锁
+    search = locked(search, "search")  # 初始检索与 search_reports 共用同一把锁
     toolbox = ToolBox(search, parser, store, names, settings.agent.search_k)
     return AgentDeps(
         llm=LLMClient(settings.llm, settings.generation.cache_dir if llm_cache else None),
         retrieve=search,
         tools=toolbox,
-        page_texts=locked(PdfPageTexts(manifest, settings.paths.raw_dir)),
+        page_texts=locked(PdfPageTexts(manifest, settings.paths.raw_dir), "page_texts"),
         cfg=settings.agent,
         context_k=settings.generation.context_k,
         answer_max_tokens=settings.generation.max_tokens,

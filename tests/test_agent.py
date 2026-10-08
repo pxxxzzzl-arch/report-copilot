@@ -1,6 +1,8 @@
 """agent/* 与 LLMClient.chat_tools 的单元测试：假大模型按脚本发出工具调用，假检索 + 内存存储，不联网、不连数据库。"""
 
 import json
+import threading
+import time
 from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
@@ -9,7 +11,7 @@ import pytest
 from langgraph.checkpoint.memory import InMemorySaver
 
 from agent.fin_db import MetricRow
-from agent.graph import AgentDeps, answer_from_state, build_graph, run_turn
+from agent.graph import AgentDeps, answer_from_state, build_graph, locked, run_turn
 from agent.state import Evidence
 from agent.tools import CalcError, ToolBox, format_decimal, safe_calc
 from common.log import trace_context
@@ -268,3 +270,43 @@ def test_graph_multi_turn_rewrite_with_checkpointer() -> None:
     assert [e["id"] for e in second["evidence"]] == [1, 2] and second["citations"] == []
     # 不同 thread 互不影响：t2 没有任何保存的状态
     assert graph.get_state({"configurable": {"thread_id": "t2"}}).values == {}
+
+
+# ---------------- 锁的等待 / 持有时间日志（D-032） ----------------
+
+
+def test_locked_logs_wait_and_hold(caplog):
+    """两个线程同时调用：后拿到锁的一方 wait_ms 约等于前一方的执行时间；两次的 hold_ms 都约等于执行时间。"""
+    started = threading.Event()
+
+    def slow(x):
+        started.set()
+        time.sleep(0.1)
+        return x * 2
+
+    f = locked(slow, "search")
+    caplog.set_level("INFO", logger="agent.graph")
+    out = []
+    t1 = threading.Thread(target=lambda: out.append(f(1)))
+    t1.start()
+    started.wait()  # 确保第一个线程已经拿到锁、正在执行
+    out.append(f(2))
+    t1.join()
+
+    assert sorted(out) == [2, 4]
+    recs = [r for r in caplog.records if getattr(r, "stage", None) == "lock"]
+    assert len(recs) == 2 and all(r.lock == "search" for r in recs)
+    assert all(r.hold_ms >= 95 for r in recs)
+    first, second = recs  # 先释放的是第一个线程
+    assert first.wait_ms < 20
+    assert second.wait_ms >= 50  # 第二次调用至少排队到第一个线程执行结束
+
+
+def test_locked_logs_even_on_error(caplog):
+    def boom():
+        raise ValueError("x")
+
+    caplog.set_level("INFO", logger="agent.graph")
+    with pytest.raises(ValueError):
+        locked(boom, "page_texts")()
+    assert [r.lock for r in caplog.records if getattr(r, "stage", None) == "lock"] == ["page_texts"]
