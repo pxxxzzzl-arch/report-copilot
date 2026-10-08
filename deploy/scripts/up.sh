@@ -22,7 +22,7 @@ docker info >/dev/null 2>&1 || fail "Docker 未运行，请先启动 Docker Desk
 [ -f .env ] || fail "缺少 .env：cp .env.example .env，并填写大模型地址、密钥和数据库口令"
 # 与 api 的部署配置对应：parser v1 + fixed 500/50 的切分结果、bge-m3 模型（README「数据准备」「模型与基础设施」）
 for p in data/manifest.csv data/raw data/parsed/chunks/v1_fixed_c500_o50.jsonl data/models/bge-m3/config.json; do
-  [ -e "$p" ] || fail "缺少 $p，请先按 README 准备数据和模型"
+  [ -e "$p" ] || fail "缺少 $p，请先按 README「数据准备」准备数据和模型（解析、切分、建索引都要加 PARSE__PARSER=v1）"
 done
 
 echo "→ 构建镜像并启动服务（首次加载向量模型约需 1 分钟）"

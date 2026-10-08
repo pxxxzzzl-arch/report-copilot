@@ -8,6 +8,11 @@
 
 > 仅基于公开的定期报告，不提供投资建议。
 
+文档导航：[架构说明](docs/architecture.md)（推荐先读）· [技术决策记录](docs/decisions.md) · [Bad Case 记录](experiments/badcases.md) · [评测集标注规范](eval/goldset_schema.md)
+
+数据说明：仓库不包含年报 PDF 和模型权重，需要按下文从巨潮资讯网下载、从 HuggingFace / ModelScope 获取；
+评测集和实验明细中引用的年报原文片段，均来自上市公司依法公开披露的定期报告。
+
 ## 一键运行（阶段 10）
 
 已按下文准备好数据（下载 → 解析 → 切分 → 建索引 → 建财务指标表）和 `.env` 后：
@@ -82,10 +87,12 @@ uv run python -m ingest.download --codes 600519,000858,000568,300750,002594,6889
 # PDF 预检（逐页明细 -> data/parsed/precheck/，汇总 -> data/precheck_summary.csv）
 uv run python -m ingest.precheck
 
-# 解析 -> 切分 -> 建索引（切分参数见 config.chunk；Apple 芯片可加 EMBEDDING__DEVICE=mps，快约 8 倍）
-uv run python -m ingest.parse
-uv run python -m ingest.chunk
-EMBEDDING__DEVICE=mps uv run python -m ingest.index
+# 解析 -> 切分 -> 建索引。最终配置使用解析器 v1（去页眉页脚，D-019），一键运行也依赖它；
+# 不加 PARSE__PARSER=v1 得到的是 v0 基线（E001）的切分和索引，两者可以并存。
+# 切分参数见 config.chunk；Apple 芯片建索引时可加 EMBEDDING__DEVICE=mps，快约 8 倍
+PARSE__PARSER=v1 uv run python -m ingest.parse
+PARSE__PARSER=v1 uv run python -m ingest.chunk
+PARSE__PARSER=v1 EMBEDDING__DEVICE=mps uv run python -m ingest.index
 
 # 财务指标表（阶段 7）：从"主要会计数据和财务指标"表抽取 9 个核心指标，逐条原文校验后写入 Postgres
 uv run python -m agent.fin_db build
