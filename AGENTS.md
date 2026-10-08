@@ -99,6 +99,7 @@ report-copilot/
     client.py             # API 客户端（SSE 解析）与进度文案
   experiments/
     log.csv               # 每次实验一行
+    bench_log.csv         # 压测（B###）每次运行一行；明细在 bench_runs/
     runs/                 # 每次实验的逐题明细 {exp_id}.jsonl（召回结果、命中情况、各项指标）
     gen_log.csv           # 生成实验（G###）每次一行
     gen_runs/             # 生成实验（G###）与多轮对话实验（D###）的逐题明细
@@ -114,7 +115,9 @@ report-copilot/
     Dockerfile              # api 与 ui 共用的应用镜像
     scripts/up.sh           # 一键启动 / 停止
   bench/
-    load_test.py          # 推理压测
+    load_test.py          # 轻量压测：闭环并发 / 突发过载（阶段 11，D-032）
+    server_log.py         # 从 api 日志按 trace_id 汇总服务端耗时构成
+    compose.bench.yml     # 压测用叠加配置（只调高单客户端限流）
 ```
 
 ## 4. 数据规范
@@ -195,5 +198,5 @@ gold 带 `alt` 时，主位置或任一 alt 位置满足 1、2 条（第 3 条�
 - [x] 阶段 8：FastAPI 服务（SSE 按节点推送进度、PostgresSaver 多轮、Redis 限流、可选 API Key；与 G007 一致性回归 10/10，见 D-029）
 - [x] 阶段 9：前端（Streamlit 两栏；点击引用显示原页并高亮，413 条引用中 408 条可定位；见 D-030）
 - [x] 阶段 10：容器化与一键运行（不做公网部署，方案存档在 archive/public-deploy 分支；容器内与 G007 一致性回归 10/10；见 D-031）
-- [ ] 阶段 11：vLLM 部署与压测
+- [x] 阶段 11：轻量压测（不做 vLLM 自部署；并发 8 时吞吐 72.8 题/分钟、120 个请求全部成功，瓶颈是串行的检索锁，利用率 92%；过载时 503 在 40ms 内返回；见 D-032、D-033）
 - [ ] 阶段 12：面试材料

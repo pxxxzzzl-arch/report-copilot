@@ -21,6 +21,26 @@ deploy/scripts/up.sh down   # 停止（数据保留在 deploy/volumes/）
 通过容器 API 回归 10 道题，检索结果、答案、引用和工具调用与 G007 明细 10/10 一致（D-031）。
 端口只绑定本机；年报 PDF 和模型权重不打进镜像，运行时只读挂载 `data/`。
 
+## 压测（阶段 11）
+
+对一键运行的容器做轻量压测（大模型用 DeepSeek API，关闭缓存；题目取自 v2，每档 30 题），设计与预先登记见 D-032，结果见 D-033：
+
+| 并发 | 成功 | 吞吐（题/分钟） | 答案延迟 p50 / p90 | 检索排队 p50 |
+|---|---|---|---|---|
+| 1 | 30/30 | 17.5 | 2.9s / 5.3s | 0 |
+| 4 | 30/30 | 61.0 | 3.5s / 5.7s | 0 |
+| 8 | 30/30 | 72.8 | 5.2s / 8.5s | 1.6s |
+
+- 瓶颈是检索：嵌入模型不是线程安全的，检索在一把锁上串行执行（CPU 上每次约 0.55 秒）。并发 8 时锁利用率 92%，吞吐上限约 80~90 题/分钟；
+- 超过并发上限（8）的请求在 40ms 内返回 503，名额不泄漏。
+
+```bash
+# 启动时叠加压测配置（只调高单客户端限流），然后按 D-032 的计划运行；结束后用 up.sh 恢复正常配置
+docker compose --env-file .env -f deploy/docker-compose.dev.yml -f deploy/docker-compose.yml -f bench/compose.bench.yml up -d --wait
+uv run python -m bench.load_test --concurrency 4 --group 2 --desc "闭环并发 4"
+uv run python -m bench.load_test --burst 12 --rounds 3 --verify 8 --group 0 --desc "突发过载"
+```
+
 ## 本地开发
 
 ```bash

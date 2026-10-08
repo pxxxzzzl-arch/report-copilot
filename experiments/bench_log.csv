@@ -1,0 +1,6 @@
+exp_id,date,git_commit,改动说明,mode,concurrency,group,n_requests,n_ok,errors,wall_s,throughput_qpm,retrieved_p50_ms,retrieved_p90_ms,answer_p50_ms,answer_p90_ms,answer_p95_ms,answer_max_ms,search_wait_p50_ms,search_hold_p50_ms,llm_ms_p50,llm_calls_mean,cache_hit_ratio,cost_usd,备注
+B001,2026-10-08,df1ee60,闭环并发 1（D-032）,closed_loop,1,0,30,30,,102.7,17.52,661.3,820.4,2939.0,5253.5,5455.2,6858.8,0.0,637.7,2274.6,2.63,0.9162,0.0193,明细 experiments/bench_runs/B001.jsonl
+B002,2026-10-08,df1ee60,闭环并发 2（D-032）,closed_loop,2,1,30,30,,49.9,36.05,669.5,998.4,2960.3,4853.9,5906.5,6529.7,0.0,548.5,2176.4,2.47,0.9412,0.0148,明细 experiments/bench_runs/B002.jsonl
+B003,2026-10-08,df1ee60,闭环并发 4（D-032）,closed_loop,4,2,30,30,,29.5,61.01,674.7,1510.0,3463.5,5657.1,5702.5,6365.7,0.0,546.5,2473.7,2.53,0.9484,0.0169,明细 experiments/bench_runs/B003.jsonl
+B004,2026-10-08,df1ee60,闭环并发 8（D-032）,closed_loop,8,3,30,30,,24.7,72.79,2110.0,3687.0,5169.7,8548.3,11684.4,13927.7,1594.9,559.2,2671.2,2.6,0.9436,0.0189,明细 experiments/bench_runs/B004.jsonl
+B005,2026-10-08,df1ee60,突发过载 12×3 + 验证 8（D-032）,burst,12,0,44,32,busy=12,36.6,52.48,2769.6,4719.9,5707.4,8363.1,8921.7,11740.4,2082.1,540.8,2520.5,2.69,0.9496,0.0187,明细 experiments/bench_runs/B005.jsonl
