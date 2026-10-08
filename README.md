@@ -8,6 +8,19 @@
 
 > 仅基于公开的定期报告，不提供投资建议。
 
+## 一键运行（阶段 10）
+
+已按下文准备好数据（下载 → 解析 → 切分 → 建索引 → 建财务指标表）和 `.env` 后：
+
+```bash
+deploy/scripts/up.sh        # 构建镜像，启动 Qdrant / Postgres / Redis / API / 前端，等全部就绪（约 30 秒）
+deploy/scripts/up.sh down   # 停止（数据保留在 deploy/volumes/）
+```
+
+浏览器打开 http://localhost:8501，接口文档在 http://localhost:8000/docs。容器内的系统配置与评测最终配置一致（检索 E013 + Agent G007），
+通过容器 API 回归 10 道题，检索结果、答案、引用和工具调用与 G007 明细 10/10 一致（D-031）。
+端口只绑定本机；年报 PDF 和模型权重不打进镜像，运行时只读挂载 `data/`。
+
 ## 本地开发
 
 ```bash
