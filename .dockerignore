@@ -1,0 +1,16 @@
+# 构建上下文里只保留运行需要的代码；数据、模型、密钥、实验记录都不进镜像
+.git
+.venv
+.env
+.env.*
+!.env.example
+data/
+deploy/volumes/
+deploy/secrets/
+deploy/snapshots/
+experiments/
+tests/
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+.DS_Store

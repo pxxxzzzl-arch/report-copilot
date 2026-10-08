@@ -21,6 +21,7 @@ dependencies = [
     "qdrant-client>=1.19,<1.20",
     "redis>=8.1",
     "streamlit>=1.64,<1.65",
+    "torch>=2.14,<2.15",
     "uvicorn[standard]>=0.54",
 ]
 
@@ -44,3 +45,13 @@ filterwarnings = [
 [tool.uv]
 # 本项目是应用而不是可发布的库，不需要把自身打包安装。
 package = false
+
+# PyTorch（FlagEmbedding 依赖它）：Linux（部署用的容器）只装 CPU 版，避免默认的 CUDA 版把镜像撑大好几 GB（服务器没有 GPU）；
+# macOS 仍用 PyPI 上的版本（支持 MPS）。sources 只对直接依赖生效，所以 torch 在 dependencies 中显式声明（D-031）
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true  # 只有上面指定的包才从这个源安装，其他包仍从 PyPI 安装

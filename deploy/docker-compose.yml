@@ -1,0 +1,73 @@
+# 本地一键运行（阶段 10，D-031）：在开发基础设施（docker-compose.dev.yml 的 qdrant / postgres / redis）之上
+# 叠加 api 与 ui 两个应用容器。基础设施沿用 deploy/volumes/ 中的数据——Qdrant 里就是评测用的那份索引，
+# Postgres 里已有财务指标表，不需要迁移或重建。
+#
+# 在项目根目录执行（推荐直接用 deploy/scripts/up.sh，它会先检查数据、构建镜像、等服务就绪）：
+#   docker compose --env-file .env -f deploy/docker-compose.dev.yml -f deploy/docker-compose.yml up -d
+# 浏览器打开 http://localhost:8501。端口只绑定 127.0.0.1，只供本机访问，因此不开启 API 鉴权。
+
+x-app: &app
+  image: report-copilot:${IMAGE_TAG:-local}
+  build:
+    context: ..
+    dockerfile: deploy/Dockerfile
+  restart: unless-stopped
+
+services:
+  api:
+    <<: *app
+    environment:
+      # ---- 系统配置：与评测中的最终配置一致（检索 E013 + Agent G007，D-019、D-028）----
+      PARSE__PARSER: v1
+      RETRIEVAL__USE_FILTER: "true"
+      RETRIEVAL__STRIP_ENTITIES: "true"
+      RETRIEVAL__SOURCES: '["dense","bm25","sparse"]'
+      EMBEDDING__DEVICE: cpu   # 容器里用不了 Apple 芯片的 MPS
+      # ---- 大模型：从项目根目录的 .env 读取 ----
+      LLM__BASE_URL: ${LLM__BASE_URL:?请在 .env 中设置 LLM__BASE_URL}
+      LLM__API_KEY: ${LLM__API_KEY:?请在 .env 中设置 LLM__API_KEY}
+      LLM__MODEL: ${LLM__MODEL:?请在 .env 中设置 LLM__MODEL}
+      # ---- 存储：容器内网地址（.env 里的 STORE__* 是宿主机地址，这里覆盖）----
+      STORE__QDRANT_URL: http://qdrant:6333
+      STORE__POSTGRES_DSN: postgresql://copilot:${POSTGRES_PASSWORD}@postgres:5432/copilot
+      STORE__REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      LOG__JSON_FORMAT: "true"
+    volumes:
+      - ../data:/app/data:ro   # manifest.csv、raw/、parsed/chunks/、models/bge-m3/
+    ports:
+      - "127.0.0.1:8000:8000"  # 方便直接调试接口（/docs、/readyz）
+    healthcheck:
+      # /readyz 会检查 Postgres、Redis、Qdrant；启动时加载 bge-m3 需要几十秒，用 start_period 留出时间
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/readyz', timeout=5)"]
+      interval: 10s
+      timeout: 8s
+      retries: 5
+      start_period: 180s
+    deploy:
+      resources:
+        limits:
+          memory: ${API_MEMORY_LIMIT:-5g}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+
+  ui:
+    <<: *app
+    command: ["streamlit", "run", "ui/app.py", "--server.address", "0.0.0.0", "--server.port", "8501",
+              "--server.headless", "true", "--browser.gatherUsageStats", "false"]
+    environment:
+      UI__API_BASE: http://api:8000
+    ports:
+      - "127.0.0.1:8501:8501"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+    depends_on:
+      api:
+        condition: service_healthy
