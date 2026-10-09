@@ -22,14 +22,14 @@
 | 模块 | 选型 |
 |---|---|
 | 语言与环境 | Python 3.11，依赖管理用 uv（或 pip + requirements.txt），Docker / Docker Compose |
-| PDF 解析 | PyMuPDF（文本、字体、坐标、页面渲染），pdfplumber（表格），OCR 用 RapidOCR 或 PaddleOCR |
+| PDF 解析 | PyMuPDF（文本、字体、坐标、页面渲染），pdfplumber（表格），OCR 用 RapidOCR 或 PaddleOCR（未启用：语料全部为文本页，D-008） |
 | 中文分词 / BM25 | jieba + 自己实现或 rank_bm25 |
 | Embedding | BAAI/bge-m3（dense + sparse），通过 FlagEmbedding 调用；预留"OpenAI 兼容 Embedding API"的切换开关 |
 | Reranker | BAAI/bge-reranker-v2-m3（FlagEmbedding） |
 | 向量库 | Qdrant（dense 与 sparse 用 named vectors 存） |
 | 关系库 | PostgreSQL（元数据、财务指标表、LangGraph Checkpoint、操作记录表） |
 | 缓存 / 限流 | Redis |
-| 大模型 | 任意 OpenAI 兼容接口（开发期用 API，压测期用 vLLM 自部署），模型名和地址全部放配置 |
+| 大模型 | 任意 OpenAI 兼容接口（开发期用 API；原计划压测期用 vLLM 自部署，阶段 11 改为对 API 轻量压测，D-032），模型名和地址全部放配置 |
 | Agent | LangGraph（StateGraph + PostgresSaver） |
 | 服务 | FastAPI（异步）+ SSE 流式输出 |
 | 前端 | Streamlit（问答界面 + 点击引用显示原文页面截图并高亮） |
@@ -61,8 +61,8 @@ report-copilot/
     parse.py              # 解析为统一中间格式
     chunk.py              # 各种切分策略（按配置切换）
     tables.py             # 表格抽取、跨页拼接
-    ocr.py                # 扫描页 OCR
-    index.py              # 写入 Qdrant / BM25 索引
+    ocr.py                # 扫描页 OCR（未实现：语料全部为文本页，D-008）
+    index.py              # 写入 Qdrant（dense + sparse）；BM25 索引在服务启动时于内存中构建
   retrieval/
     embedding.py          # 向量化接口（建索引与检索共用）；v0 为本地 bge-m3
     dense.py  sparse.py  bm25.py  fusion.py  rerank.py  search.py
