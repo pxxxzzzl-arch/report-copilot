@@ -14,10 +14,11 @@ from __future__ import annotations
 
 import ast
 import json
+import re
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from decimal import Decimal, DivisionByZero, InvalidOperation, localcontext
+from decimal import Decimal, InvalidOperation, Overflow, localcontext
 
 from agent.fin_db import FinStore
 from agent.state import Evidence
@@ -101,6 +102,8 @@ class CalcError(ValueError):
 _MAX_EXPR_LEN = 300
 _MAX_NODES = 200
 _BINOPS = {ast.Add: Decimal.__add__, ast.Sub: Decimal.__sub__, ast.Mult: Decimal.__mul__, ast.Div: Decimal.__truediv__}
+# 只接受普通十进制写法（可带小数点和科学计数法）；0x10、0o7、1_000 这类 Python 字面量不是年报里的数字
+_DECIMAL_LITERAL = re.compile(r"(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?")
 
 
 def safe_calc(expression: str) -> Decimal:
@@ -125,7 +128,10 @@ def safe_calc(expression: str) -> Decimal:
     def ev(node: ast.AST) -> Decimal:
         if isinstance(node, ast.Constant) and type(node.value) in (int, float):
             # 直接用源码里的数字串构造 Decimal，避免 0.1 这类数先变成二进制浮点带来的误差
-            return Decimal(ast.get_source_segment(expr, node))  # type: ignore[arg-type]
+            src = ast.get_source_segment(expr, node) or ""
+            if not _DECIMAL_LITERAL.fullmatch(src):
+                raise CalcError(f"只支持普通十进制数字：{src}")
+            return Decimal(src)
         if isinstance(node, ast.BinOp) and type(node.op) in _BINOPS:
             return _BINOPS[type(node.op)](ev(node.left), ev(node.right))
         if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
@@ -137,10 +143,16 @@ def safe_calc(expression: str) -> Decimal:
 
     with localcontext() as ctx:
         ctx.prec = 28
+        # 捕获全部算术异常并转成 CalcError，由工具层返回给模型，而不是让整个请求失败（D-026、D-035）。
+        # 1/0 抛 DivisionByZero（ZeroDivisionError 的子类）；0/0 抛 InvalidOperation；1e999999*1e999999 抛 Overflow
         try:
             return ev(tree.body)
-        except (DivisionByZero, InvalidOperation):
-            raise CalcError("除数为 0 或结果无效") from None
+        except ZeroDivisionError:
+            raise CalcError("除数为 0") from None
+        except Overflow:
+            raise CalcError("数值过大，超出可计算范围") from None
+        except ArithmeticError:
+            raise CalcError("计算结果无效") from None
 
 
 def format_decimal(v: Decimal, places: int = 10) -> str:

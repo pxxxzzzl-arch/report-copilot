@@ -32,6 +32,7 @@ from tests.test_index_dense import _chunk
         ("0.1+0.2", "0.3"),  # Decimal：没有二进制浮点误差
         ("-(3-5)", "2"),
         ("10/4", "2.5"),
+        (".5+1e3", "1000.5"),  # 小数点开头、科学计数法都是普通十进制写法
     ],
 )
 def test_safe_calc_values(expr: str, expected: str) -> None:
@@ -51,10 +52,25 @@ def test_safe_calc_values(expr: str, expected: str) -> None:
         "1+" * 200 + "1",  # 过长
         "[1][0]",
         "5%",
+        "0/0",  # Decimal 抛 InvalidOperation
+        "1e999999*1e999999",  # Decimal 抛 Overflow：修复前未被捕获，整个请求失败（D-035）
+        "9e999998*100",
+        "0x10+1",  # 十六进制等 Python 字面量
+        "1_000+1",
     ],
 )
 def test_safe_calc_rejects(expr: str) -> None:
     with pytest.raises(CalcError):
+        safe_calc(expr)
+
+
+@pytest.mark.parametrize(
+    ("expr", "message"),
+    [("1/0", "除数为 0"), ("0/0", "无效"), ("1e999999*1e999999", "数值过大"), ("0x10+1", "十进制")],
+)
+def test_safe_calc_error_messages(expr: str, message: str) -> None:
+    """错误信息会返回给模型，让它改正后重试，所以要说清楚错在哪里。"""
+    with pytest.raises(CalcError, match=message):
         safe_calc(expr)
 
 
@@ -141,6 +157,9 @@ def test_calculator_tool_record() -> None:
     assert out.calc == {"expression": "(2-1)/4", "result": "0.25"} and out.new_evidence == []
     bad = _toolbox().run("calculator", '{"expression": "abs(-1)"}', [])
     assert not bad.record["ok"] and "error" in bad.calc
+    # 溢出也要变成一次失败的工具调用、把错误返回给模型，而不是抛出异常让整个请求失败（D-035）
+    big = _toolbox().run("calculator", '{"expression": "1e999999*1e999999"}', [])
+    assert not big.record["ok"] and "数值过大" in big.content
 
 
 # ---------------- LLMClient.chat_tools ----------------
